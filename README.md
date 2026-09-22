@@ -35,7 +35,9 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
   CDC identity (`04A9:3040`). The latter still carries O1 frames and is not the
   original KLSI/MCCI transport.
 - `WinUsbTransport` remains available behind `--winusb` for future native USB
-  firmware work.
+  firmware work. It also recognizes the Zadig interface GUID used by the
+  experimental Minima `04A9:3040` identity build; this path must be selected
+  explicitly and still transports O1 frames.
 - The Arduino project only forwards framed requests to its camera-side UART.
 
 The first camera operation is deliberately read-only: `camera identify`.

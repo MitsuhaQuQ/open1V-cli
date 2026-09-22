@@ -7,14 +7,18 @@
 #include <winusb.h>
 
 #include <array>
+#include <chrono>
 #include <cwctype>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace open1v {
 namespace {
 constexpr GUID kDeviceInterfaceGuid =
     {0x975f44d9, 0x0d08, 0x43fd, {0x8b, 0x3e, 0x12, 0x7c, 0xa8, 0xaf, 0xff, 0x9d}};
+constexpr GUID kCanonEsE1ZadigInterfaceGuid =
+    {0x677481f5, 0x0ce1, 0x4dc0, {0xbe, 0x6b, 0x65, 0x01, 0x2e, 0x89, 0xa3, 0xde}};
 constexpr GUID kUsbDeviceInterfaceGuid =
     {0xa5dcbf10, 0x6530, 0x11d2, {0x90, 0x1f, 0x00, 0xc0, 0x4f, 0xb9, 0x51, 0xed}};
 
@@ -58,10 +62,13 @@ std::wstring findDevicePath(const GUID& interfaceGuid,
 struct WinUsbTransport::Impl {
     HANDLE device{INVALID_HANDLE_VALUE};
     WINUSB_INTERFACE_HANDLE usb{nullptr};
+    WINUSB_INTERFACE_HANDLE associatedUsb{nullptr};
+    WINUSB_INTERFACE_HANDLE ioUsb{nullptr};
     UCHAR bulkIn{};
     UCHAR bulkOut{};
 
     ~Impl() {
+        if (associatedUsb) WinUsb_Free(associatedUsb);
         if (usb) WinUsb_Free(usb);
         if (device != INVALID_HANDLE_VALUE) CloseHandle(device);
     }
@@ -69,6 +76,10 @@ struct WinUsbTransport::Impl {
 
 WinUsbTransport::WinUsbTransport() : impl_(std::make_unique<Impl>()) {
     auto path = findDevicePath(kDeviceInterfaceGuid);
+    if (path.empty()) {
+        path = findDevicePath(kCanonEsE1ZadigInterfaceGuid,
+                              L"vid_04a9&pid_3040");
+    }
     if (path.empty()) {
         path = findDevicePath(kUsbDeviceInterfaceGuid, L"vid_303a&pid_1001");
     }
@@ -81,17 +92,81 @@ WinUsbTransport::WinUsbTransport() : impl_(std::make_unique<Impl>()) {
     if (impl_->device == INVALID_HANDLE_VALUE) throw windowsError("cannot open WinUSB bridge");
     if (!WinUsb_Initialize(impl_->device, &impl_->usb)) throw windowsError("WinUsb_Initialize failed");
 
-    USB_INTERFACE_DESCRIPTOR descriptor{};
-    if (!WinUsb_QueryInterfaceSettings(impl_->usb, 0, &descriptor))
-        throw windowsError("cannot query WinUSB interface");
-    for (UCHAR index = 0; index < descriptor.bNumEndpoints; ++index) {
-        WINUSB_PIPE_INFORMATION pipe{};
-        if (!WinUsb_QueryPipe(impl_->usb, 0, index, &pipe)) continue;
-        if (pipe.PipeType != UsbdPipeTypeBulk) continue;
-        if (USB_ENDPOINT_DIRECTION_IN(pipe.PipeId)) impl_->bulkIn = pipe.PipeId;
-        else impl_->bulkOut = pipe.PipeId;
+    const auto inspectInterface = [&](WINUSB_INTERFACE_HANDLE handle) {
+        USB_INTERFACE_DESCRIPTOR descriptor{};
+        if (!WinUsb_QueryInterfaceSettings(handle, 0, &descriptor)) return;
+        UCHAR bulkIn = 0;
+        UCHAR bulkOut = 0;
+        for (UCHAR index = 0; index < descriptor.bNumEndpoints; ++index) {
+            WINUSB_PIPE_INFORMATION pipe{};
+            if (!WinUsb_QueryPipe(handle, 0, index, &pipe)) continue;
+            if (pipe.PipeType != UsbdPipeTypeBulk) continue;
+            if (USB_ENDPOINT_DIRECTION_IN(pipe.PipeId)) bulkIn = pipe.PipeId;
+            else bulkOut = pipe.PipeId;
+        }
+        if (bulkIn && bulkOut) {
+            impl_->ioUsb = handle;
+            impl_->bulkIn = bulkIn;
+            impl_->bulkOut = bulkOut;
+        }
+    };
+
+    inspectInterface(impl_->usb);
+    if (!impl_->ioUsb &&
+        WinUsb_GetAssociatedInterface(impl_->usb, 0, &impl_->associatedUsb)) {
+        inspectInterface(impl_->associatedUsb);
     }
     if (!impl_->bulkIn || !impl_->bulkOut) throw std::runtime_error("WinUSB bulk endpoints not found");
+
+    if (impl_->ioUsb == impl_->associatedUsb) {
+        // Zadig binds WinUSB to the complete CDC device instead of loading
+        // usbser.sys. Reproduce the two CDC ACM requests normally issued by
+        // the serial driver so Arduino Serial accepts data on interface 1.
+        std::array<UCHAR, 7> lineCoding{
+            0x00, 0xc2, 0x01, 0x00, // 115200, little endian
+            0x00,                   // one stop bit
+            0x00,                   // no parity
+            0x08};                  // eight data bits
+        WINUSB_SETUP_PACKET setLineCoding{0x21, 0x20, 0, 0,
+                                           static_cast<USHORT>(lineCoding.size())};
+        ULONG transferred = 0;
+        const BOOL lineCodingOk = WinUsb_ControlTransfer(
+            impl_->usb, setLineCoding, lineCoding.data(),
+            static_cast<ULONG>(lineCoding.size()), &transferred, nullptr);
+        if (!lineCodingOk) {
+            if (GetLastError() != ERROR_SEM_TIMEOUT)
+                throw windowsError("cannot set CDC line coding");
+        } else if (transferred != lineCoding.size()) {
+            throw std::runtime_error("short CDC line-coding transfer");
+        }
+        WINUSB_SETUP_PACKET setControlLines{0x21, 0x22, 0x0003, 0, 0};
+        transferred = 0;
+        if (!WinUsb_ControlTransfer(impl_->usb, setControlLines, nullptr, 0,
+                                    &transferred, nullptr)) {
+            if (GetLastError() != ERROR_SEM_TIMEOUT)
+                throw windowsError("cannot enable CDC control lines");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    // Match SerialTransport's open behavior. A previous process can leave a
+    // complete O1 response queued after a CDC control timeout or early exit.
+    // It must not be mistaken for the first response of this session.
+    if (!WinUsb_FlushPipe(impl_->ioUsb, impl_->bulkIn))
+        throw windowsError("cannot flush WinUSB input");
+    ULONG drainTimeout = 10;
+    WinUsb_SetPipePolicy(impl_->ioUsb, impl_->bulkIn, PIPE_TRANSFER_TIMEOUT,
+                         sizeof(drainTimeout), &drainTimeout);
+    std::array<UCHAR, 64> stale{};
+    for (;;) {
+        ULONG received = 0;
+        if (!WinUsb_ReadPipe(impl_->ioUsb, impl_->bulkIn, stale.data(),
+                             static_cast<ULONG>(stale.size()), &received,
+                             nullptr)) {
+            if (GetLastError() == ERROR_SEM_TIMEOUT) break;
+            throw windowsError("cannot drain WinUSB input");
+        }
+        if (!received) break;
+    }
 }
 
 WinUsbTransport::~WinUsbTransport() = default;
@@ -99,12 +174,12 @@ WinUsbTransport::~WinUsbTransport() = default;
 std::vector<std::uint8_t> WinUsbTransport::transact(
     std::span<const std::uint8_t> request, std::chrono::milliseconds timeout) {
     ULONG timeoutValue = static_cast<ULONG>(timeout.count());
-    WinUsb_SetPipePolicy(impl_->usb, impl_->bulkIn, PIPE_TRANSFER_TIMEOUT,
+    WinUsb_SetPipePolicy(impl_->ioUsb, impl_->bulkIn, PIPE_TRANSFER_TIMEOUT,
                          sizeof(timeoutValue), &timeoutValue);
-    WinUsb_SetPipePolicy(impl_->usb, impl_->bulkOut, PIPE_TRANSFER_TIMEOUT,
+    WinUsb_SetPipePolicy(impl_->ioUsb, impl_->bulkOut, PIPE_TRANSFER_TIMEOUT,
                          sizeof(timeoutValue), &timeoutValue);
     ULONG written = 0;
-    if (!WinUsb_WritePipe(impl_->usb, impl_->bulkOut,
+    if (!WinUsb_WritePipe(impl_->ioUsb, impl_->bulkOut,
                           const_cast<PUCHAR>(request.data()),
                           static_cast<ULONG>(request.size()), &written, nullptr) ||
         written != request.size()) {
@@ -116,7 +191,7 @@ std::vector<std::uint8_t> WinUsbTransport::transact(
     std::size_t required = 0;
     do {
         ULONG received = 0;
-        if (!WinUsb_ReadPipe(impl_->usb, impl_->bulkIn, chunk.data(),
+        if (!WinUsb_ReadPipe(impl_->ioUsb, impl_->bulkIn, chunk.data(),
                              static_cast<ULONG>(chunk.size()), &received, nullptr))
             throw windowsError("WinUSB read failed");
         response.insert(response.end(), chunk.begin(), chunk.begin() + received);
