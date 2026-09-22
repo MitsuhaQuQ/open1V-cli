@@ -354,7 +354,6 @@ std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
         throw std::runtime_error("film-record clear requires a fresh camera session");
 
     std::vector<CameraPacket> packets;
-    bool clearAcknowledged = false;
     try {
         auto opened = beginSession();
         packets.insert(packets.end(), opened.begin(), opened.end());
@@ -369,33 +368,38 @@ std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
                 "film-record clear acknowledgement was missing or invalid; "
                 "E2 was not retried because the camera state is ambiguous");
         }
-        clearAcknowledged = true;
         packets.push_back({"CLEAR E2", result.bytes});
 
+        // The camera remains busy for an indeterminate period after E2. Do
+        // not send F2 or start a new PC session here: the original application
+        // keeps this session alive and refreshes E1/FC in place.
         pause(200);
-        endSession();
-        pause(300);
-
-        opened = beginSession();
-        packets.insert(packets.end(), opened.begin(), opened.end());
-        auto status = perform(CameraRead::settings);
-        packets.insert(packets.end(), status.begin(), status.end());
-
-        const auto found = std::find_if(status.begin(), status.end(),
-            [](const CameraPacket& packet) { return packet.label == "E1"; });
-        if (found == status.end() || found->bytes.size() != 5 ||
-            found->bytes[2] != 0 || found->bytes[3] != 0) {
-            throw std::runtime_error(
-                "camera acknowledged the clear command, but E1 did not verify zero rolls");
+        bool empty = false;
+        const auto deadline = std::chrono::steady_clock::now() + 15s;
+        while (std::chrono::steady_clock::now() < deadline) {
+            try {
+                auto e1 = fixed(0xe1, 5, 1000);
+                packets.push_back({"CLEAR E1", e1});
+                if (e1[2] == 0 && e1[3] == 0) {
+                    empty = true;
+                    break;
+                }
+            } catch (const std::exception&) {
+                // E2 can temporarily leave only a completion byte available.
+                // E1 is read-only and may safely be retried within this session.
+            }
+            pause(200);
         }
+        if (!empty)
+            throw std::runtime_error(
+                "camera acknowledged the clear command, but E1 did not report zero rolls within 15 seconds");
+
+        pause(78);
+        packets.push_back({"CLEAR FC", fixed(0xfc, 5, 1000)});
         endSession();
         return packets;
     } catch (...) {
         try { if (sessionActive_) endSession(); } catch (...) {}
-        if (clearAcknowledged) {
-            // Preserve the original verification failure: callers must not
-            // retry E2 merely because post-clear status could not be read.
-        }
         throw;
     }
 }
