@@ -1,0 +1,10 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="open1V.vcxproj" />
+  <Project Path="open1V-debug.vcxproj" />
+  <Project Path="open1v-core.vcxproj" />
+</Solution>
+
