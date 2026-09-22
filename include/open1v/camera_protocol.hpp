@@ -19,6 +19,7 @@ enum class CameraRead {
     cfn,
     pfn,
     clock,
+    filmStatus,
     filmRecords,
     all,
 };

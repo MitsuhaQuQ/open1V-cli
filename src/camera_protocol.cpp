@@ -498,6 +498,9 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
     case CameraRead::cfn: cfn(); break;
     case CameraRead::pfn: pfn(); break;
     case CameraRead::clock: clock(); break;
+    case CameraRead::filmStatus:
+        addFixed(output, "FILM STATUS E1", 0xe1, 5, 650);
+        break;
     case CameraRead::filmRecords: filmRecords(); break;
     case CameraRead::all:
         cfn();
