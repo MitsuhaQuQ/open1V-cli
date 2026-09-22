@@ -98,8 +98,7 @@ std::vector<std::uint8_t> CameraProtocolSession::fixed(
         if (result.status == 0 && packetValid(result.bytes, value) &&
             result.bytes.size() == expected) return result.bytes;
         if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
-            const std::uint8_t acknowledge = 0xf4;
-            (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
+            serviceAsyncF4();
         }
         pause(attempt == 0 ? 100 : 150);
     }
@@ -108,21 +107,50 @@ std::vector<std::uint8_t> CameraProtocolSession::fixed(
 
 std::vector<std::uint8_t> CameraProtocolSession::variable(
     std::uint8_t value, std::uint16_t capacity, std::uint16_t timeoutMs) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
+    // A camera-originated F4 can arrive between any two P.Fn blocks. The
+    // original Remote answers F4 and requests F6 before retrying the pending
+    // read. Allow a longer bounded retry window because the camera may be
+    // busy completing that asynchronous status update.
+    for (int attempt = 0; attempt < 8; ++attempt) {
         const auto result = bridge_.exchangeResult(
             std::span<const std::uint8_t>(&value, 1), capacity, timeoutMs, 50);
         if (packetValid(result.bytes, value)) return result.bytes;
         if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
-            const std::uint8_t acknowledge = 0xf4;
-            (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
+            serviceAsyncF4();
         }
-        pause(attempt == 0 ? 100 : 150);
+        pause(attempt < 2 ? 100 : 200);
     }
     std::ostringstream message;
     message << "debug variable-length camera command 0x"
             << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
             << static_cast<unsigned>(value) << " failed";
     throw std::runtime_error(message.str());
+}
+
+void CameraProtocolSession::serviceAsyncF4() {
+    const std::uint8_t acknowledge = 0xf4;
+    (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
+    pause(2);
+
+    // F6 is the status response that the original application requests after
+    // acknowledging an unsolicited F4. Failure is left to the pending read's
+    // normal retry budget; the camera may still be busy and return no bytes.
+    const std::uint8_t status = 0xf6;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        try {
+            const auto result = bridge_.exchangeResult(
+                std::span<const std::uint8_t>(&status, 1), 17, 1000, 50);
+            if (result.status == 0 && packetValid(result.bytes, status)) return;
+            if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
+                (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
+                pause(2);
+            }
+        } catch (...) {
+            // Do not turn an asynchronous status refresh into a hard failure
+            // for the read that was already in progress.
+        }
+        pause(50);
+    }
 }
 
 void CameraProtocolSession::begin(std::vector<CameraPacket>& output) {

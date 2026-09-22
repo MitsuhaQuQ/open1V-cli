@@ -78,6 +78,7 @@ public:
 private:
     void begin(std::vector<CameraPacket>& output);
     void nextAction(std::vector<CameraPacket>& output);
+    void serviceAsyncF4();
     void close();
     std::vector<std::uint8_t> fixed(std::uint8_t command,
                                     std::uint16_t expected,
