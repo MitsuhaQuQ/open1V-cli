@@ -64,8 +64,6 @@ open1V camera clock
 open1V camera info
 open1V camera console
 open1V camera set-id --id 12
-open1V camera set-cfn --function 19 --option 3
-open1V camera set-pfn --function 29 --enabled on
 open1V camera set-clock --clock 260922120000
 open1V-debug camera read-settings
 open1V-debug camera handshake-debug
@@ -113,23 +111,24 @@ second communication path. Opaque fields remain available only in raw
 `*-debug` output.
 `camera info` reads all four groups in one physical PC-mode session and exits once.
 
+Running `open1V.exe` without arguments enters `camera console` automatically.
 `camera console` is the interactive human-readable mode. Startup performs only
 the handshake and displays `Camera: EOS-1V` plus the camera ID, so the prompt
-appears quickly. `show` explicitly reads all current settings. The console also
-accepts `set cfn`,
-`set pfn`, `set id`, and `set time`. Each `set` command opens a guided prompt:
+appears quickly. `show` explicitly reads all current settings. The console accepts
+`cfn`, `pfn`, `set id`, and `set clock` (`set time` remains a compatibility alias).
+`cfn` and `pfn` each open a guided read/modify prompt:
 it refreshes the target's current value, asks for a field number where needed,
 shows its available choices, then validates and verifies the write. Entering
 `q` at any prompt returns to the main console. PC mode remains active until
 `exit` or end-of-input, when the only F2 is sent.
 
-`set cfn` first asks for `current`, `1`, `2`, or `3`. It then displays only the
+`cfn` first asks for `current`, `1`, `2`, or `3`. It then displays only the
 selected bank and writes through the matching current/registered command pair.
 Inside `cfn-edit`, any number of options can be staged. The complete selected
 bank is shown after every change; `commit` writes and verifies all differences,
 while `discard` or `q` returns without writing.
 
-`set pfn` similarly enters `pfn-edit`. ON/OFF and supported sub-values are
+`pfn` similarly enters `pfn-edit`. ON/OFF and supported sub-values are
 staged in a complete P.Fn preview. `commit` is available only in that sub-state
 and performs the verified writes; `discard` or `q` abandons them.
 

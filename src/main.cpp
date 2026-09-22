@@ -47,6 +47,7 @@ void usage() {
                  "  bridge link-status Diagnose the S3-to-RA4 link\n"
                  "  camera identify    Read camera identity (no setting changes)\n";
 #else
+                 "  (no arguments)     Start the interactive settings session\n"
                  "  camera console     Interactive settings session\n";
 #endif
     std::cout << "  camera id          Read camera identity in readable form\n"
@@ -57,8 +58,6 @@ void usage() {
 #ifdef OPEN1V_DEBUG_CLI
     std::cout << "  camera console     Interactive settings session; F2 is sent on exit\n";
     std::cout << "  camera set-id --id N\n"
-                 "  camera set-cfn --function N --option N\n"
-                 "  camera set-pfn --function N --enabled on|off\n"
                  "  camera set-clock --clock YYMMDDhhmmss\n";
     std::cout << "  camera read-settings  Read fixed status blocks (read-only)\n";
     std::cout << "  camera <flow>-debug   Run a validated diagnostic flow\n"
@@ -77,8 +76,6 @@ void usage() {
                  "  --winusb           Use the reserved WinUSB transport\n";
 #else
     std::cout << "  camera set-id --id N\n"
-                 "  camera set-cfn --function N --option N\n"
-                 "  camera set-pfn --function N --enabled on|off\n"
                  "  camera set-clock --clock YYMMDDhhmmss\n";
     std::cout << "options:\n"
                  "  --port COMx        Use an explicit serial port\n"
@@ -250,6 +247,19 @@ int main(int argc, char** argv) {
             return 0;
         }
 #endif
+#ifndef OPEN1V_DEBUG_CLI
+        // The normal executable is an interactive settings tool by default.
+        // Keep the synthetic argv in static storage because the rest of main
+        // reads the command group/action through argv until the session ends.
+        static char defaultApp[] = "open1V";
+        static char defaultGroup[] = "camera";
+        static char defaultAction[] = "console";
+        static char* defaultConsoleArgs[] = {defaultApp, defaultGroup, defaultAction};
+        if (argc == 1) {
+            argc = 3;
+            argv = defaultConsoleArgs;
+        }
+#endif
         if (argc < 3 || argc > 12) { usage(); return argc == 1 ? 0 : 2; }
         std::unique_ptr<open1v::ITransport> transport;
         bool useWinUsb = false;
@@ -357,13 +367,13 @@ int main(int argc, char** argv) {
                 std::string line;
                 auto ask=[&](const char* prompt,std::string& answer){std::cout<<prompt; if(!std::getline(std::cin,answer))return false; return answer!="q"&&answer!="Q";};
                 auto number=[](const std::string& text){std::size_t used=0;auto value=std::stoul(text,&used);if(used!=text.size())throw std::runtime_error("enter a number or q");return value;};
-                while(std::cout<<"\nCommands: show | set cfn | set pfn | set id | set clock | exit\n"
+                while(std::cout<<"\nCommands: show | cfn | pfn | set id | set clock | exit\n"
                                && std::cout<<"open1V> " && std::getline(std::cin,line)){
                     std::istringstream input(line); std::string command,target,extra; input>>command>>target>>extra;
                     if(command=="exit"||command=="quit")break;
                     try {
                         if(command=="show") { auto p=protocol.perform(open1v::CameraRead::all); printCfn(p);printPfn(p);showClock(p); }
-                        else if(command=="set"&&extra.empty()&&target=="cfn") {
+                        else if(command=="cfn"&&target.empty()&&extra.empty()) {
                             std::string value; std::cout<<"C.Fn banks: current, 1, 2, 3\n";
                             if(!ask("Bank (q=back): ",value))continue;
                             open1v::CfnBank bank{}; std::uint8_t bankCommand=0xd1; const char* bankName="Current";
@@ -380,7 +390,7 @@ int main(int argc, char** argv) {
                                 std::cout<<"C.Fn changes committed and verified\n";done=true;continue;}
                                 const auto n=number(value);if(n<1||n>19)throw std::runtime_error("C.Fn number must be 1..19");std::cout<<"Available options for C.Fn-"<<n<<": 0.."<<(n==19?7:3)<<"\n";if(!ask("Option (q=cancel this item): ",value))continue;const auto option=number(value);if(option>static_cast<unsigned long>(n==19?7:3))throw std::runtime_error("option is outside its valid range");auto& bytes=mutablePacket(staged,bankCommand);const auto at=2+(n-1)/2;const auto encoded=static_cast<std::uint8_t>(1u<<option);if(n==19)bytes[at]=encoded;else if(n&1)bytes[at]=static_cast<std::uint8_t>((bytes[at]&0xf0)|encoded);else bytes[at]=static_cast<std::uint8_t>((bytes[at]&0x0f)|(encoded<<4));
                             }
-                        } else if(command=="set"&&extra.empty()&&target=="pfn") {
+                        } else if(command=="pfn"&&target.empty()&&extra.empty()) {
                             std::vector<open1v::CameraPacket> original;
                             try { original=protocol.perform(open1v::CameraRead::pfn); }
                             catch(const std::exception& first) { std::cout<<"P.Fn read failed ("<<first.what()<<"); retrying in a new logical action...\n";original=protocol.perform(open1v::CameraRead::pfn); }
@@ -423,16 +433,6 @@ int main(int argc, char** argv) {
             if(idText.empty())throw std::runtime_error("set-id requires --id");
             open1v::CameraProtocolSession protocol(bridge); auto packets=protocol.setCameraId(static_cast<std::uint8_t>(std::stoul(idText)));
             const auto& id=findPacket(packets,0xf1); std::cout<<"Camera ID = "<<unsigned(id.at(3)&0x7f)<<'\n';
-        } else if (group == "camera" && action == "set-cfn") {
-            if(functionText.empty()||optionText.empty())throw std::runtime_error("set-cfn requires --function and --option");
-            const auto fn=static_cast<std::uint8_t>(std::stoul(functionText)), option=static_cast<std::uint8_t>(std::stoul(optionText));
-            open1v::CameraProtocolSession protocol(bridge); (void)protocol.setCurrentCfn(fn,option);
-            std::cout<<"C.Fn-"<<unsigned(fn)<<" = option "<<unsigned(option)<<'\n';
-        } else if (group == "camera" && action == "set-pfn") {
-            if(functionText.empty()||(enabledText!="on"&&enabledText!="off"))throw std::runtime_error("set-pfn requires --function and --enabled on|off");
-            const auto fn=static_cast<std::uint8_t>(std::stoul(functionText)); const bool enabled=enabledText=="on";
-            open1v::CameraProtocolSession protocol(bridge); (void)protocol.setPfnEnabled(fn,enabled);
-            std::cout<<"P.Fn-"<<unsigned(fn)<<" enabled = "<<(enabled?"on":"off")<<'\n';
         } else if (group == "camera" && action == "set-clock") {
             if(debugArgument.size()!=12)throw std::runtime_error("set-clock requires --clock YYMMDDhhmmss");
             std::array<std::uint8_t,6> value{}; for(std::size_t i=0;i<6;++i){if(debugArgument[i*2]<'0'||debugArgument[i*2]>'9'||debugArgument[i*2+1]<'0'||debugArgument[i*2+1]>'9')throw std::runtime_error("clock contains a non-digit");value[i]=static_cast<std::uint8_t>(((debugArgument[i*2]-'0')<<4)|(debugArgument[i*2+1]-'0'));}
