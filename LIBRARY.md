@@ -34,6 +34,12 @@ camera.setCurrentCfn(19, 3); // includes write read-back verification
 camera.endSession();         // the only F2
 ```
 
+`sessionActive()` reports whether the object currently owns the physical
+PC-mode connection. The connection remains open between `perform()` calls,
+matching the captured Canon application behavior. Later actions use the
+in-session `FF/F4/F1` boundary rather than repeating the full physical
+handshake. Only `endSession()` sends the final F2 exit sequence.
+
 The library returns raw `CameraPacket` values. Applications decide which
 confirmed fields to decode or display. Unknown auxiliary fields remain
 available without being assigned speculative meanings.

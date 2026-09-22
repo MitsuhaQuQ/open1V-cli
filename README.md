@@ -20,6 +20,10 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
   A future GUI can instead call `beginSession()`, any number of `perform()`
   operations, and one `endSession()`. All paths return raw `CameraPacket`
   values without interpreting them.
+- A long-lived session matches the captured Canon application behavior: the
+  physical PC-mode connection remains active across logical actions. Each later
+  action uses the in-session `FF/F4/F1` boundary; `F2` is reserved for the final
+  `endSession()`. `sessionActive()` exposes that connection state.
 - Readable commands and `*-debug` commands use that same protocol layer. The
   readable CLI decodes confirmed fields and omits fields the original
   application does not display; diagnostics print the raw packets. Diagnostic

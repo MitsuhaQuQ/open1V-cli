@@ -22,18 +22,19 @@ public:
         } else if (request.type == static_cast<std::uint8_t>(MessageType::exchange)) {
             std::vector<std::uint8_t> camera;
             if (request.payload.size() == 8) {
+                ++idlePolls_;
                 payload = {4, 0, 0};
                 return encodeFrame({static_cast<std::uint8_t>(request.type | 0x80),
                                     request.sequence, payload});
             }
             const auto command = request.payload.at(8);
-            if (command == 0xff) camera = {0xf4};
+            if (command == 0xff) { ++helloCount_; camera = {0xf4}; }
             if (command == 0xf6) camera = {0xf6,0x0e,0x38,0xff,0x1a,0x17,0x41,0x18,
                                            0x10,0x1c,0x00,0x04,0x00,0x00,0x00,0x00,0xf1};
             if (command == 0xf1) camera = {0xf1,0x03,0x01,0x00,0x34,0x35};
-            if (command == 0xf2) camera = goodbyeSeen_++ == 0
+            if (command == 0xf2) { ++goodbyeCount_; camera = goodbyeSeen_++ == 0
                 ? std::vector<std::uint8_t>{0xf4}
-                : std::vector<std::uint8_t>{0xf2};
+                : std::vector<std::uint8_t>{0xf2}; }
             payload.push_back(static_cast<std::uint8_t>(camera.size()));
             payload.push_back(0);
             payload.insert(payload.end(), camera.begin(), camera.end());
@@ -42,8 +43,15 @@ public:
                             request.sequence, payload});
     }
 
+    [[nodiscard]] int helloCount() const noexcept { return helloCount_; }
+    [[nodiscard]] int goodbyeCount() const noexcept { return goodbyeCount_; }
+    [[nodiscard]] int idlePolls() const noexcept { return idlePolls_; }
+
 private:
     int goodbyeSeen_{};
+    int helloCount_{};
+    int goodbyeCount_{};
+    int idlePolls_{};
 };
 
 void require(bool value, const char* message) {
@@ -74,6 +82,27 @@ int runSelfTests() {
     require(found != packets.end() && found->bytes[2] == 1 &&
             found->bytes[3] == 0 && found->bytes[4] == 0x34,
             "camera protocol identity failed");
+
+    // Canon's desktop software retains one physical PC-mode connection while
+    // it performs several logical actions. Lock that behavior down: later
+    // actions use the in-session boundary and F2 is reserved for final close.
+    FakeTransport persistentTransport;
+    BridgeClient persistentBridge(persistentTransport);
+    CameraProtocolSession persistentCamera(persistentBridge);
+    (void)persistentCamera.beginSession();
+    require(persistentCamera.sessionActive(), "persistent session did not open");
+    (void)persistentCamera.perform(CameraRead::identity);
+    (void)persistentCamera.perform(CameraRead::identity);
+    require(persistentTransport.goodbyeCount() == 0,
+            "persistent session exited between logical actions");
+    require(persistentTransport.helloCount() == 3,
+            "persistent session did not use the captured next-action handshake");
+    require(persistentTransport.idlePolls() > 0,
+            "persistent session did not wait for the next action boundary");
+    persistentCamera.endSession();
+    require(!persistentCamera.sessionActive(), "persistent session did not close");
+    require(persistentTransport.goodbyeCount() == 2,
+            "persistent session did not perform the captured two-stage exit");
     std::cout << "All offline tests passed.\n";
     return 0;
 }

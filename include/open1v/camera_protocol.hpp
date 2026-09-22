@@ -43,6 +43,7 @@ public:
     std::vector<CameraPacket> beginSession();
     std::vector<CameraPacket> perform(CameraRead selection);
     void endSession();
+    [[nodiscard]] bool sessionActive() const noexcept { return sessionActive_; }
 
     // Verified setting writes. Each method owns one complete session and
     // returns before/after wire packets for presentation or logging.
