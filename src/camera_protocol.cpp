@@ -394,6 +394,42 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
         addFixed(output, "FC", 0xfc, 5);
         addFixed(output, "E1", 0xe1, 5);
     };
+    auto filmRecords = [&] {
+        addFixed(output, "FILM E1", 0xe1, 5, 650);
+        const auto& e1 = output.back().bytes;
+        const auto reportedRolls = static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(e1[2]) << 8 | e1[3]);
+        if (reportedRolls > 100)
+            throw std::runtime_error("camera reported an unreasonable film roll count");
+        if (reportedRolls == 0) return;
+
+        std::uint16_t rollsRead = 0;
+        while (true) {
+            pause(15);
+            auto header = variable(0xe3, 36, 1200);
+            output.push_back({"FILM E3", header});
+            if (header.size() == 4 && header[1] == 1 &&
+                header[2] == 0 && header[3] == 0) break;
+            if (header.size() != 36)
+                throw std::runtime_error("unexpected E3 film header length");
+            if (rollsRead >= reportedRolls)
+                throw std::runtime_error("camera returned more film rolls than E1 reported");
+
+            std::size_t frameCount = 0;
+            while (true) {
+                pause(15);
+                auto frame = variable(0xe4, 36, 1200);
+                output.push_back({"FILM E4", frame});
+                if (frame.size() == 4 && frame[1] == 1 &&
+                    frame[2] == 0 && frame[3] == 0) break;
+                if (++frameCount > 1000)
+                    throw std::runtime_error("film roll exceeded the safety frame limit");
+            }
+            ++rollsRead;
+        }
+        if (rollsRead != reportedRolls)
+            throw std::runtime_error("film roll count did not match E1");
+    };
 
     // Even a failed operation consumed the current logical action. A caller
     // retry must therefore use nextAction() rather than continuing mid-flow.
@@ -407,6 +443,7 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
     case CameraRead::cfn: cfn(); break;
     case CameraRead::pfn: pfn(); break;
     case CameraRead::clock: clock(); break;
+    case CameraRead::filmRecords: filmRecords(); break;
     case CameraRead::all:
         cfn();
         nextAction(output); pfn();

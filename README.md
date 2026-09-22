@@ -1,7 +1,7 @@
 # open1V
 
 `open1V` is a standalone Windows command-line application for the independently
-implemented UNO R4 WiFi camera bridge. It has no build-time dependency on the
+implemented UNO R4 WiFi/Minima camera bridge. It has no build-time dependency on the
 Arduino source tree.
 
 The repository now builds three targets:
@@ -31,7 +31,9 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
 - `BridgeClient` owns the documented `O1` framing protocol.
 - `ITransport` isolates platform transport from both layers.
 - `SerialTransport` is the default Windows adapter and auto-detects the
-  official UNO R4 WiFi COM port.
+  official UNO R4 WiFi/Minima identity or the experimental Minima ES-E1-ID
+  CDC identity (`04A9:3040`). The latter still carries O1 frames and is not the
+  original KLSI/MCCI transport.
 - `WinUsbTransport` remains available behind `--winusb` for future native USB
   firmware work.
 - The Arduino project only forwards framed requests to its camera-side UART.

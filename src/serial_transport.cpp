@@ -32,7 +32,18 @@ std::wstring property(HDEVINFO devices, SP_DEVINFO_DATA& device, DWORD key) {
     return reinterpret_cast<const wchar_t*>(buffer.data());
 }
 
-std::wstring findArduinoPort() {
+std::wstring instanceId(HDEVINFO devices, SP_DEVINFO_DATA& device) {
+    DWORD needed = 0;
+    SetupDiGetDeviceInstanceIdW(devices, &device, nullptr, 0, &needed);
+    if (!needed) return {};
+    std::wstring value(needed, L'\0');
+    if (!SetupDiGetDeviceInstanceIdW(devices, &device, value.data(), needed, nullptr))
+        return {};
+    if (!value.empty() && value.back() == L'\0') value.pop_back();
+    return value;
+}
+
+std::wstring findBridgePort() {
     HDEVINFO devices = SetupDiGetClassDevsW(&GUID_DEVCLASS_PORTS, nullptr, nullptr,
                                              DIGCF_PRESENT);
     if (devices == INVALID_HANDLE_VALUE) return {};
@@ -41,7 +52,17 @@ std::wstring findArduinoPort() {
         SP_DEVINFO_DATA device{sizeof(device)};
         if (!SetupDiEnumDeviceInfo(devices, index, &device)) break;
         const auto hardwareId = property(devices, device, SPDRP_HARDWAREID);
-        if (hardwareId.find(L"VID_2341&PID_1002") == std::wstring::npos) continue;
+        const auto id = instanceId(devices, device);
+        const bool isSupportedBridge =
+            hardwareId.find(L"VID_2341&PID_1002") != std::wstring::npos ||
+            hardwareId.find(L"VID_2341&PID_0069") != std::wstring::npos ||
+            hardwareId.find(L"VID_2341&PID_006A") != std::wstring::npos ||
+            hardwareId.find(L"VID_04A9&PID_3040") != std::wstring::npos ||
+            id.find(L"VID_2341&PID_1002") != std::wstring::npos ||
+            id.find(L"VID_2341&PID_0069") != std::wstring::npos ||
+            id.find(L"VID_2341&PID_006A") != std::wstring::npos ||
+            id.find(L"VID_04A9&PID_3040") != std::wstring::npos;
+        if (!isSupportedBridge) continue;
         const auto friendlyName = property(devices, device, SPDRP_FRIENDLYNAME);
         const auto begin = friendlyName.rfind(L"(COM");
         const auto end = friendlyName.rfind(L')');
@@ -49,7 +70,7 @@ std::wstring findArduinoPort() {
         const auto port = friendlyName.substr(begin + 1, end - begin - 1);
         if (!match.empty() && match != port) {
             SetupDiDestroyDeviceInfoList(devices);
-            throw std::runtime_error("multiple Arduino UNO R4 WiFi serial ports found; use --port");
+            throw std::runtime_error("multiple compatible serial bridges found; use --port");
         }
         match = port;
     }
@@ -70,8 +91,8 @@ struct SerialTransport::Impl {
 };
 
 SerialTransport::SerialTransport(std::wstring port) : impl_(std::make_unique<Impl>()) {
-    if (port.empty()) port = findArduinoPort();
-    if (port.empty()) throw std::runtime_error("Arduino UNO R4 WiFi serial port not found");
+    if (port.empty()) port = findBridgePort();
+    if (port.empty()) throw std::runtime_error("compatible serial bridge not found");
     impl_->port = CreateFileW(devicePath(port).c_str(), GENERIC_READ | GENERIC_WRITE,
                               0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (impl_->port == INVALID_HANDLE_VALUE) throw windowsError("cannot open Arduino serial port");
@@ -91,10 +112,9 @@ SerialTransport::SerialTransport(std::wstring port) : impl_(std::make_unique<Imp
     timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.WriteTotalTimeoutConstant = 1000;
     if (!SetCommTimeouts(impl_->port, &timeouts)) throw windowsError("cannot configure serial timeouts");
-    // The official UNO R4 WiFi USB bridge applies the CDC line state to its
-    // RA4 link asynchronously. Do not let the first protocol frame race that
-    // transition immediately after opening the COM port.
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    // UNO R4 boards can reset when Windows asserts the CDC line state. Minima
+    // then needs time to restart the bridge sketch before the first frame.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     PurgeComm(impl_->port, PURGE_RXCLEAR | PURGE_TXCLEAR);
 }
 
