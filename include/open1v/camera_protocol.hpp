@@ -37,6 +37,12 @@ public:
     // task (CameraRead::all is a predefined multi-action task), and sends F2.
     std::vector<CameraPacket> readOnce(CameraRead selection);
 
+    // Deletes every film record stored by the camera with the verified E2
+    // command, then opens a fresh session and confirms that E1 reports zero.
+    // E2 is deliberately never retried because a lost acknowledgement leaves
+    // the result ambiguous.
+    std::vector<CameraPacket> clearFilmRecords();
+
     // Long-lived application lifecycle for a future GUI. beginSession() is
     // called once, perform() may be called repeatedly, and endSession() sends
     // the only F2. A later perform() automatically starts the next logical

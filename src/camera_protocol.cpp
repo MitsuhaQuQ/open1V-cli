@@ -349,6 +349,57 @@ std::vector<CameraPacket> CameraProtocolSession::readOnce(CameraRead selection) 
     }
 }
 
+std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
+    if (sessionActive_)
+        throw std::runtime_error("film-record clear requires a fresh camera session");
+
+    std::vector<CameraPacket> packets;
+    bool clearAcknowledged = false;
+    try {
+        auto opened = beginSession();
+        packets.insert(packets.end(), opened.begin(), opened.end());
+
+        pause(78);
+        const std::uint8_t command = 0xe2;
+        const auto result = bridge_.exchangeResult(
+            std::span<const std::uint8_t>(&command, 1), 2, 2000, 50);
+        if (result.status != 0 || result.bytes.size() != 2 ||
+            result.bytes[0] != command || result.bytes[1] == 0) {
+            throw std::runtime_error(
+                "film-record clear acknowledgement was missing or invalid; "
+                "E2 was not retried because the camera state is ambiguous");
+        }
+        clearAcknowledged = true;
+        packets.push_back({"CLEAR E2", result.bytes});
+
+        pause(200);
+        endSession();
+        pause(300);
+
+        opened = beginSession();
+        packets.insert(packets.end(), opened.begin(), opened.end());
+        auto status = perform(CameraRead::settings);
+        packets.insert(packets.end(), status.begin(), status.end());
+
+        const auto found = std::find_if(status.begin(), status.end(),
+            [](const CameraPacket& packet) { return packet.label == "E1"; });
+        if (found == status.end() || found->bytes.size() != 5 ||
+            found->bytes[2] != 0 || found->bytes[3] != 0) {
+            throw std::runtime_error(
+                "camera acknowledged the clear command, but E1 did not verify zero rolls");
+        }
+        endSession();
+        return packets;
+    } catch (...) {
+        try { if (sessionActive_) endSession(); } catch (...) {}
+        if (clearAcknowledged) {
+            // Preserve the original verification failure: callers must not
+            // retry E2 merely because post-clear status could not be read.
+        }
+        throw;
+    }
+}
+
 std::vector<CameraPacket> CameraProtocolSession::beginSession() {
     if (sessionActive_) throw std::runtime_error("camera session is already active");
     std::vector<CameraPacket> packets;
