@@ -133,9 +133,9 @@ while `discard` or `q` returns without writing.
 staged in a complete P.Fn preview. `commit` is available only in that sub-state
 and performs the verified writes; `discard` or `q` abandons them.
 
-`set time` offers `sync`, `date`, `time`, and `both`. `sync` uses the Windows
-local system clock. Date-only and time-only changes preserve the other half of
-the value just read from the camera.
+`set clock` offers two choices: `1) Sync with system`, which uses the Windows
+local system clock, and `2) Set manually`, which accepts the complete
+`YYMMDDhhmmss` value. `set time` remains accepted as a compatibility alias.
 
 P.Fn-27 includes both its ON/OFF bit and a dial-selection value from the fifth
 `DD/DE` payload byte: `0` Main Dial only, `1` Quick Control Dial only, and `2`

@@ -357,7 +357,7 @@ int main(int argc, char** argv) {
                 std::string line;
                 auto ask=[&](const char* prompt,std::string& answer){std::cout<<prompt; if(!std::getline(std::cin,answer))return false; return answer!="q"&&answer!="Q";};
                 auto number=[](const std::string& text){std::size_t used=0;auto value=std::stoul(text,&used);if(used!=text.size())throw std::runtime_error("enter a number or q");return value;};
-                while(std::cout<<"\nCommands: show | set cfn | set pfn | set id | set time | exit\n"
+                while(std::cout<<"\nCommands: show | set cfn | set pfn | set id | set clock | exit\n"
                                && std::cout<<"open1V> " && std::getline(std::cin,line)){
                     std::istringstream input(line); std::string command,target,extra; input>>command>>target>>extra;
                     if(command=="exit"||command=="quit")break;
@@ -402,20 +402,16 @@ int main(int argc, char** argv) {
                             // camera returned a semantically invalid but checksummed F3.
                             try { for(const auto x:v)(void)bcd(x); }
                             catch(...) { p=protocol.perform(open1v::CameraRead::clock);f=findPacket(p,0xf3);std::copy_n(f.begin()+2,6,v.begin());for(const auto x:v)(void)bcd(x); }
-                            std::cout<<"Time modes: sync, date, time, both\n";
-                            if(!ask("Mode (q=back): ",value))continue;
                             auto applyDigits=[&](const std::string& digits,std::size_t first,std::size_t count){if(digits.size()!=count*2)throw std::runtime_error("wrong number of digits");for(std::size_t i=0;i<count;++i){const char a=digits[i*2],b=digits[i*2+1];if(!std::isdigit(static_cast<unsigned char>(a))||!std::isdigit(static_cast<unsigned char>(b)))throw std::runtime_error("value contains a non-digit");v[first+i]=static_cast<std::uint8_t>(((a-'0')<<4)|(b-'0'));}};
-                            if(value=="sync") {
+                            std::cout<<"Clock setting:\n1) Sync with system\n2) Set manually\n";
+                            if(!ask("Selection (q=back): ",value))continue;
+                            if(value=="1") {
                                 const auto now=std::time(nullptr); std::tm local{}; localtime_s(&local,&now);
                                 const std::array<unsigned,6> d{static_cast<unsigned>((local.tm_year+1900)%100),static_cast<unsigned>(local.tm_mon+1),static_cast<unsigned>(local.tm_mday),static_cast<unsigned>(local.tm_hour),static_cast<unsigned>(local.tm_min),static_cast<unsigned>(local.tm_sec)};
                                 for(std::size_t i=0;i<6;++i)v[i]=static_cast<std::uint8_t>(((d[i]/10)<<4)|(d[i]%10));
-                            } else if(value=="date") {
-                                if(!ask("Date YYMMDD (q=back): ",value))continue; applyDigits(value,0,3);
-                            } else if(value=="time") {
-                                if(!ask("Time hhmmss (q=back): ",value))continue; applyDigits(value,3,3);
-                            } else if(value=="both") {
+                            } else if(value=="2") {
                                 if(!ask("Date and time YYMMDDhhmmss (q=back): ",value))continue; applyDigits(value,0,6);
-                            } else throw std::runtime_error("mode must be sync, date, time, or both");
+                            } else throw std::runtime_error("selection must be 1 or 2");
                             auto result=protocol.setClock(v); printClock({result.back()}); std::cout<<"Camera time write verified\n";
                         }
                         else if(!command.empty()) std::cout<<"Unknown command\n";
