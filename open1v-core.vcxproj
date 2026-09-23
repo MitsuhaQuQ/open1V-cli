@@ -150,6 +150,7 @@
   <ItemGroup>
     <ClInclude Include="include\open1v\bridge_client.hpp" />
     <ClInclude Include="include\open1v\bridge_protocol.hpp" />
+    <ClInclude Include="include\open1v\camera_data.hpp" />
     <ClInclude Include="include\open1v\camera_request.hpp" />
     <ClInclude Include="include\open1v\camera_protocol.hpp" />
     <ClInclude Include="include\open1v\serial_transport.hpp" />
@@ -159,6 +160,7 @@
   <ItemGroup>
     <ClCompile Include="src\bridge_client.cpp" />
     <ClCompile Include="src\bridge_protocol.cpp" />
+    <ClCompile Include="src\camera_data.cpp" />
     <ClCompile Include="src\camera_request.cpp" />
     <ClCompile Include="src\camera_protocol.cpp" />
     <ClCompile Include="src\serial_transport.cpp" />

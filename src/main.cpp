@@ -1,5 +1,6 @@
 #include "open1v/bridge_client.hpp"
 #include "open1v/camera_protocol.hpp"
+#include "open1v/camera_data.hpp"
 #ifdef OPEN1V_DEBUG_CLI
 #include "open1v/self_test.hpp"
 #endif
@@ -111,20 +112,18 @@ int oneHot(std::uint8_t v) {
 }
 const std::vector<std::uint8_t>& findPacket(
     const std::vector<open1v::CameraPacket>& packets, std::uint8_t command) {
-    for (const auto& p : packets) if (!p.bytes.empty() && p.bytes[0] == command) return p.bytes;
-    throw std::runtime_error("expected camera block missing");
+    return open1v::cameraBlock(packets, command);
 }
 void printCfnBank(const std::vector<open1v::CameraPacket>& packets,
                   std::uint8_t command, const char* name,
                   const std::vector<open1v::CameraPacket>* original = nullptr) {
-        const auto& b=findPacket(packets,command); std::array<int,19> options{};
-        for(int fn=1;fn<=19;++fn){auto x=b.at(2+(fn-1)/2);auto w=static_cast<std::uint8_t>(fn==19?x:((fn&1)?x&15:x>>4));options[fn-1]=oneHot(w);}
+        const auto options=open1v::decodeCfnOptions(findPacket(packets,command));
         std::array<bool,19> changed{};
-        if(original){const auto& old=findPacket(*original,command);for(int fn=1;fn<=19;++fn){auto x=old.at(2+(fn-1)/2);auto w=static_cast<std::uint8_t>(fn==19?x:((fn&1)?x&15:x>>4));changed[fn-1]=oneHot(w)!=options[fn-1];}}
+        if(original){const auto old=open1v::decodeCfnOptions(findPacket(*original,command));for(int fn=1;fn<=19;++fn)changed[fn-1]=old[fn-1]!=options[fn-1];}
         std::cout<<name<<":\n  No. |";
         for(int fn=1;fn<=19;++fn)std::cout<<(changed[fn-1]?'*':' ')<<std::setfill('0')<<std::setw(2)<<fn<<std::setfill(' ')<<" |";
         std::cout<<"\n  Opt |";
-        for(std::size_t i=0;i<options.size();++i){std::cout<<(changed[i]?'*':' ')<<std::setw(2);if(options[i]>=0)std::cout<<options[i];else std::cout<<'?';std::cout<<" |";}
+        for(std::size_t i=0;i<options.size();++i){std::cout<<(changed[i]?'*':' ')<<std::setw(2);if(options[i]!=0xff)std::cout<<options[i];else std::cout<<'?';std::cout<<" |";}
         std::cout<<'\n';
 }
 void printCfn(const std::vector<open1v::CameraPacket>& packets) {
@@ -136,8 +135,8 @@ void printCfn(const std::vector<open1v::CameraPacket>& packets) {
     }
 }
 std::vector<int> pfnBits(const std::vector<std::uint8_t>& b){
-    std::vector<int> r; for(int n=1;n<=30;++n){int g=(n-1)/8,bit=(n-1)%8;
-        if(b.at(2+3-g)&(1u<<bit))r.push_back(n);} return r;
+    std::vector<int> r; const auto enabled=open1v::decodePfnEnabled(b);
+    for(int n=1;n<=30;++n)if(enabled[n-1])r.push_back(n); return r;
 }
 void printList(const char* label,const std::vector<int>& v){std::cout<<label;for(int n:v)std::cout<<' '<<n;if(v.empty())std::cout<<" none";std::cout<<'\n';}
 double fixed16(std::uint8_t h,std::uint8_t l){return ((unsigned(h)<<8)|l)/16.0;}
@@ -416,7 +415,7 @@ int main(int argc, char** argv) {
                                 const auto& before=findPacket(original,bankCommand);const auto& after=findPacket(staged,bankCommand);
                                 for(int fn=1;fn<=19;++fn){auto decode=[&](const auto& b){auto x=b.at(2+(fn-1)/2);return oneHot(static_cast<std::uint8_t>(fn==19?x:((fn&1)?x&15:x>>4)));};const auto oldValue=decode(before),newValue=decode(after);if(oldValue!=newValue)protocol.setCfn(bank,static_cast<std::uint8_t>(fn),static_cast<std::uint8_t>(newValue));}
                                 std::cout<<"C.Fn changes committed and verified\n";done=true;continue;}
-                                const auto n=number(value);if(n<1||n>19)throw std::runtime_error("C.Fn number must be 1..19");std::cout<<"Available options for C.Fn-"<<n<<": 0.."<<(n==19?7:3)<<"\n";if(!ask("Option (q=cancel this item): ",value))continue;const auto option=number(value);if(option>static_cast<unsigned long>(n==19?7:3))throw std::runtime_error("option is outside its valid range");auto& bytes=mutablePacket(staged,bankCommand);const auto at=2+(n-1)/2;const auto encoded=static_cast<std::uint8_t>(1u<<option);if(n==19)bytes[at]=encoded;else if(n&1)bytes[at]=static_cast<std::uint8_t>((bytes[at]&0xf0)|encoded);else bytes[at]=static_cast<std::uint8_t>((bytes[at]&0x0f)|(encoded<<4));
+                                const auto n=number(value);if(n<1||n>19)throw std::runtime_error("C.Fn number must be 1..19");std::cout<<"Available options for C.Fn-"<<n<<": 0.."<<(n==19?7:3)<<"\n";if(!ask("Option (q=cancel this item): ",value))continue;const auto option=number(value);open1v::setCfnOption(mutablePacket(staged,bankCommand),static_cast<unsigned>(n),static_cast<unsigned>(option));
                             }
                         } else if(command=="pfn"&&target.empty()&&extra.empty()) {
                             std::vector<open1v::CameraPacket> original;
@@ -426,7 +425,7 @@ int main(int argc, char** argv) {
                             auto& stagedDd=[&]()->std::vector<std::uint8_t>&{for(auto& packet:staged)if(!packet.bytes.empty()&&packet.bytes[0]==0xdd)return packet.bytes;throw std::runtime_error("DD block missing");}();
                             while(!done){printPfn(staged,&original);std::cout<<"* marks staged changes\npfn-edit: enter 1..30, commit, discard, or q\n";if(!ask("pfn-edit> ",value))break;if(value=="discard")break;if(value=="commit"){
                                 for(const auto& packet:staged){if(packet.bytes.empty()||packet.bytes[0]==0xd3)continue;const auto& before=findPacket(original,packet.bytes[0]);if(packet.bytes!=before)protocol.setPfnBlock(packet.bytes[0],std::span<const std::uint8_t>(packet.bytes.data()+2,packet.bytes[1]));}std::cout<<"P.Fn changes committed and verified\n";done=true;continue;}
-                                const auto n=number(value);if(n<1||n>30)throw std::runtime_error("P.Fn number must be 1..30");std::size_t state;if(!promptChoice("State (q=cancel this item): ",{"ON","OFF"},state))continue;const int g=(static_cast<int>(n)-1)/8,bit=(static_cast<int>(n)-1)%8,at=2+3-g;const auto mask=static_cast<std::uint8_t>(1u<<bit);if(state==0)stagedDd[at]|=mask;else stagedDd[at]&=static_cast<std::uint8_t>(~mask);
+                                const auto n=number(value);if(n<1||n>30)throw std::runtime_error("P.Fn number must be 1..30");std::size_t state;if(!promptChoice("State (q=cancel this item): ",{"ON","OFF"},state))continue;open1v::setPfnEnabled(stagedDd,static_cast<unsigned>(n),state==0);
                                 static constexpr std::array<int,13> parameterized{1,2,3,4,5,12,19,20,23,25,27,29,30};if(std::find(parameterized.begin(),parameterized.end(),static_cast<int>(n))!=parameterized.end())editPfnParameters(staged,static_cast<int>(n));
                             }
                         } else if(command=="set"&&extra.empty()&&target=="id") {

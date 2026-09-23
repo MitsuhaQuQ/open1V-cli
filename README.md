@@ -18,6 +18,9 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
 - `CameraRequest` is the business-neutral request layer. It validates EOS
   packets, handles bounded retries and asynchronous F4 traffic, and selects a
   bridge receive profile without knowing which setting or record is requested.
+- `camera_data` converts wire packets into reusable identity, clock, C.Fn and
+  P.Fn models. Validation and setting mutation live here rather than in the
+  terminal renderer, so a GUI can use the same rules.
 - `CameraProtocolSession` composes those requests into camera workflows. CLI calls
   `readOnce()` for handshake, one selected task, F2 shutdown, and error cleanup.
   A future GUI can instead call `beginSession()`, any number of `perform()`

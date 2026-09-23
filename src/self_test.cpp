@@ -2,6 +2,7 @@
 
 #include "open1v/bridge_client.hpp"
 #include "open1v/camera_protocol.hpp"
+#include "open1v/camera_data.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -90,6 +91,19 @@ int runSelfTests() {
     const auto decoded = decodeFrame(encodeFrame(original));
     require(decoded.type == original.type && decoded.sequence == original.sequence &&
             decoded.payload == original.payload, "frame round-trip failed");
+    std::vector<CameraPacket> modelPackets{{"F1", {0xf1,0x03,0x01,0x8c,0x34,0xc1}}};
+    const auto identity = decodeIdentity(modelPackets);
+    require(identity.modelType == 1 && identity.cameraId == 12 && identity.status == 0x34,
+            "camera identity model failed");
+    std::vector<std::uint8_t> cfn(14, 0); cfn[0] = 0xd1;
+    setCfnOption(cfn, 1, 2); setCfnOption(cfn, 19, 7);
+    const auto cfnOptions = decodeCfnOptions(cfn);
+    require(cfnOptions[0] == 2 && cfnOptions[18] == 7,
+            "C.Fn model edit failed");
+    std::vector<std::uint8_t> pfn(8, 0); pfn[0] = 0xdd;
+    setPfnEnabled(pfn, 1, true); setPfnEnabled(pfn, 30, true);
+    const auto pfnEnabled = decodePfnEnabled(pfn);
+    require(pfnEnabled[0] && pfnEnabled[29], "P.Fn model edit failed");
     FakeTransport transport;
     BridgeClient bridge(transport);
     require(bridge.ping() == "open1V", "bridge ping failed");

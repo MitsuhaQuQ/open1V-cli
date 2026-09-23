@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(OPEN1V_CORE_SOURCES
     src/bridge_client.cpp
     src/bridge_protocol.cpp
+    src/camera_data.cpp
     src/camera_request.cpp
     src/camera_protocol.cpp)
 
