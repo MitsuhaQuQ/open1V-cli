@@ -7,13 +7,13 @@ Public headers are under `include/open1v`:
 
 - `camera_protocol.hpp` — camera session lifecycle, reads, and verified writes
 - `bridge_client.hpp` — framed host-to-UNO bridge client
-- `serial_transport.hpp` — Windows COM transport and UNO R4 auto-detection
+- `serial_transport.hpp` — Windows COM or POSIX serial transport and UNO R4 auto-detection
 - `winusb_transport.hpp` — reserved native WinUSB transport
 - `transport.hpp` — transport interface for another host or tests
 
-Add `open1v-core.vcxproj` as a Visual Studio project reference and add this
-repository's `include` directory to the consumer's include path. Windows
-applications must link `setupapi.lib` and `winusb.lib`.
+Add `open1v-core.vcxproj` as a Visual Studio project reference, or consume the
+`open1v-core` CMake target. Windows applications must link `setupapi.lib` and
+`winusb.lib`; CMake supplies the macOS discovery frameworks automatically.
 
 ```cpp
 #include "open1v/camera_protocol.hpp"

@@ -9,7 +9,7 @@ namespace open1v {
 
 class SerialTransport final : public ITransport {
 public:
-    explicit SerialTransport(std::wstring port = {});
+    explicit SerialTransport(std::string port = {});
     ~SerialTransport() override;
     SerialTransport(const SerialTransport&) = delete;
     SerialTransport& operator=(const SerialTransport&) = delete;

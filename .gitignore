@@ -2,6 +2,9 @@
 x64/
 Debug/
 Release/
+build/
+CMakeFiles/
+CMakeCache.txt
 *.user
 __pycache__/
 *.pyc

@@ -90,10 +90,21 @@ struct SerialTransport::Impl {
     }
 };
 
-SerialTransport::SerialTransport(std::wstring port) : impl_(std::make_unique<Impl>()) {
-    if (port.empty()) port = findBridgePort();
-    if (port.empty()) throw std::runtime_error("compatible serial bridge not found");
-    impl_->port = CreateFileW(devicePath(port).c_str(), GENERIC_READ | GENERIC_WRITE,
+SerialTransport::SerialTransport(std::string port) : impl_(std::make_unique<Impl>()) {
+    std::wstring widePort;
+    if (port.empty()) {
+        widePort = findBridgePort();
+    } else {
+        const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                               port.data(), static_cast<int>(port.size()),
+                                               nullptr, 0);
+        if (!length) throw windowsError("invalid UTF-8 serial port name");
+        widePort.resize(static_cast<std::size_t>(length));
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, port.data(),
+                            static_cast<int>(port.size()), widePort.data(), length);
+    }
+    if (widePort.empty()) throw std::runtime_error("compatible serial bridge not found");
+    impl_->port = CreateFileW(devicePath(widePort).c_str(), GENERIC_READ | GENERIC_WRITE,
                               0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (impl_->port == INVALID_HANDLE_VALUE) throw windowsError("cannot open Arduino serial port");
 

@@ -72,13 +72,13 @@ void usage() {
     std::cout << "  camera pfn-write-debug --block C3 --expect A010 --value 9810 --allow-write-debug\n"
                  "  camera cfn-write-debug --block D1 --expect <hex> --value <hex> --allow-write-debug\n";
     std::cout << "options:\n"
-                 "  --port COMx        Use an explicit serial port\n"
+                 "  --port PATH        Use an explicit serial port\n"
                  "  --winusb           Use the reserved WinUSB transport\n";
 #else
     std::cout << "  camera set-id --id N\n"
                  "  camera set-clock --clock YYMMDDhhmmss\n";
     std::cout << "options:\n"
-                 "  --port COMx        Use an explicit serial port\n"
+                 "  --port PATH        Use an explicit serial port\n"
                  "  --winusb           Use the WinUSB transport\n";
 #endif
 }
@@ -266,7 +266,7 @@ int main(int argc, char** argv) {
 #ifdef OPEN1V_DEBUG_CLI
         bool allowWriteDebug = false;
 #endif
-        std::wstring port;
+        std::string port;
         std::string debugArgument;
 #ifdef OPEN1V_DEBUG_CLI
         std::string blockText, expectedText, valueText;
@@ -291,7 +291,7 @@ int main(int argc, char** argv) {
 #endif
             else if (option == "--port" && index + 1 < argc) {
                 const std::string value = argv[++index];
-                port.assign(value.begin(), value.end());
+                port = value;
             } else { usage(); return 2; }
         }
         if (useWinUsb && !port.empty()) { usage(); return 2; }
@@ -416,7 +416,12 @@ int main(int argc, char** argv) {
                             std::cout<<"Clock setting:\n1) Sync with system\n2) Set manually\n";
                             if(!ask("Selection (q=back): ",value))continue;
                             if(value=="1") {
-                                const auto now=std::time(nullptr); std::tm local{}; localtime_s(&local,&now);
+                                const auto now=std::time(nullptr); std::tm local{};
+#ifdef _WIN32
+                                localtime_s(&local,&now);
+#else
+                                localtime_r(&now,&local);
+#endif
                                 const std::array<unsigned,6> d{static_cast<unsigned>((local.tm_year+1900)%100),static_cast<unsigned>(local.tm_mon+1),static_cast<unsigned>(local.tm_mday),static_cast<unsigned>(local.tm_hour),static_cast<unsigned>(local.tm_min),static_cast<unsigned>(local.tm_sec)};
                                 for(std::size_t i=0;i<6;++i)v[i]=static_cast<std::uint8_t>(((d[i]/10)<<4)|(d[i]%10));
                             } else if(value=="2") {
@@ -482,4 +487,3 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
-
