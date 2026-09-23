@@ -100,7 +100,10 @@ of options can be staged. `commit` writes and verifies all differences, while
 preview, commit, and discard flow for P.Fn settings.
 
 `set clock` can synchronize with the local system clock or accept a complete
-manual `YYMMDDhhmmss` value. `set time` remains a compatibility alias.
+manual `YYMMDDhhmmss` value. EOS-1V supports calendar years 2000 through 2099,
+so `YY` always means `20YY`; system-clock synchronization is rejected outside
+that range. Dates are checked against the actual number of days in each month,
+including leap years. `set time` remains a compatibility alias.
 
 P.Fn-27 includes both its ON/OFF bit and a dial-selection value from the fifth
 `DD/DE` payload byte: `0` Main Dial only, `1` Quick Control Dial only, and `2`

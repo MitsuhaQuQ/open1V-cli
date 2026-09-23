@@ -450,7 +450,8 @@ int main(int argc, char** argv) {
 #else
                                 localtime_r(&now,&local);
 #endif
-                                const std::array<unsigned,6> d{static_cast<unsigned>((local.tm_year+1900)%100),static_cast<unsigned>(local.tm_mon+1),static_cast<unsigned>(local.tm_mday),static_cast<unsigned>(local.tm_hour),static_cast<unsigned>(local.tm_min),static_cast<unsigned>(local.tm_sec)};
+                                const auto fullYear=local.tm_year+1900;if(fullYear<2000||fullYear>2099)throw std::runtime_error("EOS-1V clock supports years 2000..2099");
+                                const std::array<unsigned,6> d{static_cast<unsigned>(fullYear-2000),static_cast<unsigned>(local.tm_mon+1),static_cast<unsigned>(local.tm_mday),static_cast<unsigned>(local.tm_hour),static_cast<unsigned>(local.tm_min),static_cast<unsigned>(local.tm_sec)};
                                 for(std::size_t i=0;i<6;++i)v[i]=static_cast<std::uint8_t>(((d[i]/10)<<4)|(d[i]%10));
                             } else if(value=="2") {
                                 if(!ask("Date and time YYMMDDhhmmss (q=back): ",value))continue; applyDigits(value,0,6);
