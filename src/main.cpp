@@ -130,6 +130,20 @@ std::vector<int> pfnBits(const std::vector<std::uint8_t>& b){
 }
 void printList(const char* label,const std::vector<int>& v){std::cout<<label;for(int n:v)std::cout<<' '<<n;if(v.empty())std::cout<<" none";std::cout<<'\n';}
 double fixed16(std::uint8_t h,std::uint8_t l){return ((unsigned(h)<<8)|l)/16.0;}
+using PfnChoice=std::pair<std::string,std::uint8_t>;
+PfnChoice pfnChoice(const char* name,int value){return {name,static_cast<std::uint8_t>(value)};}
+const std::vector<PfnChoice>& shutterChoices(){
+    static const std::vector<PfnChoice> values{
+        pfnChoice("30 s",0x10),pfnChoice("25 s",0x13),pfnChoice("20 s",0x15),pfnChoice("15 s",0x18),pfnChoice("13 s",0x1b),pfnChoice("10 s",0x1d),pfnChoice("8 s",0x20),pfnChoice("6 s",0x23),pfnChoice("5 s",0x25),pfnChoice("4 s",0x28),pfnChoice("3.2 s",0x2b),pfnChoice("2.5 s",0x2d),pfnChoice("2 s",0x30),pfnChoice("1.6 s",0x33),pfnChoice("1.3 s",0x35),pfnChoice("1 s",0x38),pfnChoice("0.8 s",0x3b),pfnChoice("0.6 s",0x3d),pfnChoice("0.5 s",0x40),pfnChoice("0.4 s",0x43),pfnChoice("0.3 s",0x45),
+        pfnChoice("1/4 s",0x48),pfnChoice("1/5 s",0x4b),pfnChoice("1/6 s",0x4d),pfnChoice("1/8 s",0x50),pfnChoice("1/10 s",0x53),pfnChoice("1/13 s",0x55),pfnChoice("1/15 s",0x58),pfnChoice("1/20 s",0x5b),pfnChoice("1/25 s",0x5d),pfnChoice("1/30 s",0x60),pfnChoice("1/40 s",0x63),pfnChoice("1/50 s",0x65),pfnChoice("1/60 s",0x68),pfnChoice("1/80 s",0x6b),pfnChoice("1/100 s",0x6d),pfnChoice("1/125 s",0x70),pfnChoice("1/160 s",0x73),pfnChoice("1/200 s",0x75),pfnChoice("1/250 s",0x78),pfnChoice("1/320 s",0x7b),pfnChoice("1/400 s",0x7d),pfnChoice("1/500 s",0x80),pfnChoice("1/640 s",0x83),pfnChoice("1/800 s",0x85),pfnChoice("1/1000 s",0x88),pfnChoice("1/1250 s",0x8b),pfnChoice("1/1600 s",0x8d),pfnChoice("1/2000 s",0x90),pfnChoice("1/2500 s",0x93),pfnChoice("1/3200 s",0x95),pfnChoice("1/4000 s",0x98),pfnChoice("1/5000 s",0x9b),pfnChoice("1/6400 s",0x9d),pfnChoice("1/8000 s",0xa0)};
+    return values;
+}
+const std::vector<PfnChoice>& apertureChoices(){
+    static const std::vector<PfnChoice> values{
+        pfnChoice("f/1.0",0x08),pfnChoice("f/1.1",0x0b),pfnChoice("f/1.2",0x0d),pfnChoice("f/1.4",0x10),pfnChoice("f/1.6",0x13),pfnChoice("f/1.8",0x15),pfnChoice("f/2.0",0x18),pfnChoice("f/2.2",0x1b),pfnChoice("f/2.5",0x1d),pfnChoice("f/2.8",0x20),pfnChoice("f/3.2",0x23),pfnChoice("f/3.5",0x25),pfnChoice("f/4.0",0x28),pfnChoice("f/4.5",0x2b),pfnChoice("f/5.0",0x2d),pfnChoice("f/5.6",0x30),pfnChoice("f/6.3",0x33),pfnChoice("f/7.1",0x35),pfnChoice("f/8.0",0x38),pfnChoice("f/9.0",0x3b),pfnChoice("f/10",0x3d),pfnChoice("f/11",0x40),pfnChoice("f/13",0x43),pfnChoice("f/14",0x45),pfnChoice("f/16",0x48),pfnChoice("f/18",0x4b),pfnChoice("f/20",0x4d),pfnChoice("f/22",0x50),pfnChoice("f/25",0x53),pfnChoice("f/29",0x55),pfnChoice("f/32",0x58),pfnChoice("f/36",0x5b),pfnChoice("f/40",0x5d),pfnChoice("f/45",0x60),pfnChoice("f/51",0x63),pfnChoice("f/57",0x65),pfnChoice("f/64",0x68),pfnChoice("f/72",0x6b),pfnChoice("f/81",0x6d),pfnChoice("f/91",0x70)};
+    return values;
+}
+std::string pfnChoiceName(std::uint8_t value,const std::vector<PfnChoice>& choices){for(const auto& choice:choices)if(choice.second==value)return choice.first;return "wire 0x"+hexByte(value);}
 bool pfnEnabled(const std::vector<std::uint8_t>& b,int n){const int g=(n-1)/8,bit=(n-1)%8;return (b.at(2+3-g)&(1u<<bit))!=0;}
 const char* pfnSwitchDescription(int n){switch(n){
 case 6:return "Register/switch shooting and metering modes";case 7:return "Repeat AEB during continuous shooting";
@@ -148,8 +162,6 @@ void printPfnItem(const std::vector<open1v::CameraPacket>& p,int n,bool changed=
     const auto& c7=findPacket(p,0xc7);const auto& c8=findPacket(p,0xc8);const auto& c0=findPacket(p,0xc0);
     const auto& cf=findPacket(p,0xcf);const auto& ce=findPacket(p,0xce);const auto& c5=findPacket(p,0xc5);const auto& c6=findPacket(p,0xc6);const auto& cd=findPacket(p,0xcd);
     static constexpr std::array<const char*,4> meter{"Evaluative","Spot","Partial","Center-weighted average"};
-    auto shutter=[](std::uint8_t v){return v==0xa0?"1/8000 s":v==0x98?"1/4000 s":v==0x10?"30 s":"unknown";};
-    auto aperture=[](std::uint8_t v){return v==0x70?"f/91":v==0x68?"f/64":v==0x08?"f/1.0":"unknown";};
     auto fps=[](std::uint8_t v){return (0x14-v)/2;};
     auto modeList=[](std::uint8_t value,const auto& modes,bool allowed){std::ostringstream out;bool first=true;for(const auto& mode:modes){const bool present=(value&mode.first)!=0;if(present==allowed){if(!first)out<<", ";out<<mode.second;first=false;}}return first?std::string("None"):out.str();};
     switch(n){
@@ -167,9 +179,9 @@ void printPfnItem(const std::vector<open1v::CameraPacket>& p,int n,bool changed=
                  <<"\n    |-- Excluded: "<<modeList(mask,modes,false)
                  <<"\n    `-- Wire allowed mask: 0x"<<hexByte(mask);break;}
     case 3:{int i=oneHot(c1.at(2)>>4);std::cout<<"Manual-exposure metering\n    `-- Mode: "<<(i>=0&&i<4?meter[i]:"unknown");break;}
-    case 4:std::cout<<"Set shutter-speed range\n    |-- Fastest: "<<shutter(c3.at(2))<<"\n    `-- Slowest: "<<shutter(c3.at(3));break;
-    case 5:std::cout<<"Set aperture range\n    |-- Smallest: "<<aperture(c4.at(2))<<"\n    `-- Largest: "<<aperture(c4.at(3));break;
-    case 12:std::cout<<"AI Servo tracking sensitivity\n    `-- Level: "<<(cb.at(2)==0x40?"Standard":("wire 0x"+hexByte(cb.at(2))));break;
+    case 4:std::cout<<"Set shutter-speed range\n    |-- Fastest: "<<pfnChoiceName(c3.at(2),shutterChoices())<<"\n    `-- Slowest: "<<pfnChoiceName(c3.at(3),shutterChoices());break;
+    case 5:std::cout<<"Set aperture range\n    |-- Smallest: "<<pfnChoiceName(c4.at(2),apertureChoices())<<"\n    `-- Largest: "<<pfnChoiceName(c4.at(3),apertureChoices());break;
+    case 12:{static constexpr std::array<const char*,5> sensitivity{"Slowest","Slow","Standard","Fast","Fastest"};const auto value=cb.at(2);const auto index=value/0x20;std::cout<<"AI Servo tracking sensitivity\n    `-- Level: "<<(value<=0x80&&value%0x20==0?sensitivity[index]:("wire 0x"+hexByte(value)));break;}
     case 19:std::cout<<"Set continuous shooting speeds\n    |-- Low: "<<fps(cc.at(3))<<" fps\n    |-- High: "<<fps(cc.at(4))<<" fps\n    `-- Ultra-high: "<<fps(cc.at(5))<<" fps";break;
     case 20:std::cout<<"Limit continuous frames\n    `-- Frames: "<<unsigned(ca.at(2));break;
     case 23:std::cout<<"Set button activation times\n    |-- Timer 1: "<<fixed16(c7.at(2),c7.at(3))<<" s\n    |-- Timer 2: "<<fixed16(c8.at(2),c8.at(3))<<" s\n    `-- Post-release: "<<fixed16(c0.at(2),c0.at(3))<<" s";break;
@@ -211,8 +223,8 @@ void editPfnParameters(std::vector<open1v::CameraPacket>& packets,int n){
         std::vector<std::string> names;for(const auto& m:modes){const bool allowed=(mutablePacket(packets,command).at(2)&m.second)!=0;names.push_back(m.first+" ["+(allowed?"Allowed":"Excluded")+"]");}
         std::size_t item;if(!chooseSub(names,item))return;std::size_t setting;if(!promptChoice("Setting (q=keep current): ",{"Allowed","Excluded"},setting))return;auto& value=mutablePacket(packets,command).at(2);if(setting==0)value|=modes[item].second;else value&=static_cast<std::uint8_t>(~modes[item].second);return;}
     if(n==3){chooseCode("Metering mode",0xc1,0,{{"Evaluative",u8(0x10)},{"Spot",u8(0x20)},{"Partial",u8(0x40)},{"Center-weighted average",u8(0x80)}});return;}
-    if(n==4){std::size_t item;if(!chooseSub({"Fastest shutter speed","Slowest shutter speed"},item))return;chooseCode(item?"Slowest shutter speed":"Fastest shutter speed",0xc3,item,item?std::vector<std::pair<std::string,std::uint8_t>>{{"30 s",u8(0x10)}}:std::vector<std::pair<std::string,std::uint8_t>>{{"1/8000 s",u8(0xa0)},{"1/4000 s",u8(0x98)}});return;}
-    if(n==5){std::size_t item;if(!chooseSub({"Smallest aperture","Largest aperture"},item))return;chooseCode(item?"Largest aperture":"Smallest aperture",0xc4,item,item?std::vector<std::pair<std::string,std::uint8_t>>{{"f/1.0",u8(0x08)}}:std::vector<std::pair<std::string,std::uint8_t>>{{"f/91",u8(0x70)},{"f/64",u8(0x68)}});return;}
+    if(n==4){std::size_t item;if(!chooseSub({"Fastest shutter speed","Slowest shutter speed"},item))return;chooseCode(item?"Slowest shutter speed":"Fastest shutter speed",0xc3,item,shutterChoices());const auto& b=mutablePacket(packets,0xc3);if(b.at(2)<b.at(3))throw std::runtime_error("fastest shutter speed must not be slower than the slowest shutter speed");return;}
+    if(n==5){std::size_t item;if(!chooseSub({"Smallest aperture","Largest aperture"},item))return;chooseCode(item?"Largest aperture":"Smallest aperture",0xc4,item,apertureChoices());const auto& b=mutablePacket(packets,0xc4);if(b.at(2)<b.at(3))throw std::runtime_error("smallest aperture must not be wider than the largest aperture");return;}
     if(n==12){chooseCode("AI Servo tracking sensitivity",0xcb,0,{{"Slowest",u8(0x00)},{"Slow",u8(0x20)},{"Standard",u8(0x40)},{"Fast",u8(0x60)},{"Fastest",u8(0x80)}});return;}
     if(n==19){std::size_t item;if(!chooseSub({"Ultra-high-speed continuous","High-speed continuous","Low-speed continuous"},item))return;std::vector<std::pair<std::string,std::uint8_t>> rates;for(int fps=1;fps<=10;++fps)rates.push_back({std::to_string(fps)+" fps",static_cast<std::uint8_t>(0x14-fps*2)});const std::size_t offset=item==0?3:item==1?2:1;chooseCode("Continuous shooting speed",0xcc,offset,rates);if(item==0)mutablePacket(packets,0xcc).at(2)=mutablePacket(packets,0xcc).at(5);return;}
     if(n==27){chooseCode("Electronic dials",0xdd,4,{{"Main Dial only",u8(0)},{"Quick Control Dial only",u8(1)},{"Both dials",u8(2)}});return;}
