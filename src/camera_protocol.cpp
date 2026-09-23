@@ -467,8 +467,12 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
                 header[2] == 0 && header[3] == 0) break;
             if (header.size() != 36)
                 throw std::runtime_error("unexpected E3 film header length");
-            if (rollsRead >= reportedRolls)
-                throw std::runtime_error("camera returned more film rolls than E1 reported");
+            // E1 is a status snapshot, not the download terminator. The camera
+            // can occasionally expose another segment before E3 iteration
+            // completes, so trust the explicit E3 all-end packet while keeping
+            // an independent hard safety limit.
+            if (rollsRead >= 100)
+                throw std::runtime_error("film download exceeded the safety roll limit");
 
             std::size_t frameCount = 0;
             while (true) {
@@ -482,8 +486,6 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
             }
             ++rollsRead;
         }
-        if (rollsRead != reportedRolls)
-            throw std::runtime_error("film roll count did not match E1");
     };
 
     // Even a failed operation consumed the current logical action. A caller
@@ -875,7 +877,6 @@ std::vector<CameraPacket> CameraProtocolSession::runDiagnostic(
 }
 
 } // namespace open1v
-
 
 
 

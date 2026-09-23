@@ -11,6 +11,9 @@ namespace open1v {
 namespace {
 class FakeTransport final : public ITransport {
 public:
+    explicit FakeTransport(bool filmCountChanges = false)
+        : filmCountChanges_(filmCountChanges) {}
+
     std::vector<std::uint8_t> transact(std::span<const std::uint8_t> bytes,
                                       std::chrono::milliseconds) override {
         const auto request = decodeFrame(bytes);
@@ -35,6 +38,19 @@ public:
             if (command == 0xf2) { ++goodbyeCount_; camera = goodbyeSeen_++ == 0
                 ? std::vector<std::uint8_t>{0xf4}
                 : std::vector<std::uint8_t>{0xf2}; }
+            if (filmCountChanges_ && command == 0xe1)
+                camera = {0xe1, 0x02, 0x00, 0x01, 0x01};
+            if (filmCountChanges_ && command == 0xe3) {
+                if (filmHeaders_++ < 2) {
+                    camera.assign(36, 0);
+                    camera[0] = 0xe3;
+                    camera[1] = 33;
+                } else {
+                    camera = {0xe3, 0x01, 0x00, 0x00};
+                }
+            }
+            if (filmCountChanges_ && command == 0xe4)
+                camera = {0xe4, 0x01, 0x00, 0x00};
             payload.push_back(static_cast<std::uint8_t>(camera.size()));
             payload.push_back(0);
             payload.insert(payload.end(), camera.begin(), camera.end());
@@ -52,6 +68,8 @@ private:
     int helloCount_{};
     int goodbyeCount_{};
     int idlePolls_{};
+    int filmHeaders_{};
+    bool filmCountChanges_{};
 };
 
 void require(bool value, const char* message) {
@@ -103,6 +121,19 @@ int runSelfTests() {
     require(!persistentCamera.sessionActive(), "persistent session did not close");
     require(persistentTransport.goodbyeCount() == 2,
             "persistent session did not perform the captured two-stage exit");
+
+    // E1 is advisory. E3's explicit all-end packet is authoritative when the
+    // camera exposes another roll segment after the E1 snapshot was read.
+    FakeTransport changingFilmTransport(true);
+    BridgeClient changingFilmBridge(changingFilmTransport);
+    CameraProtocolSession changingFilmCamera(changingFilmBridge);
+    const auto filmPackets = changingFilmCamera.readOnce(CameraRead::filmRecords);
+    const auto filmHeaders = std::count_if(filmPackets.begin(), filmPackets.end(),
+        [](const CameraPacket& packet) {
+            return packet.label == "FILM E3" && packet.bytes.size() == 36;
+        });
+    require(filmHeaders == 2,
+            "film download stopped at the stale E1 roll-count snapshot");
     std::cout << "All offline tests passed.\n";
     return 0;
 }
