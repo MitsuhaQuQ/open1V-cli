@@ -26,7 +26,7 @@ void pause(std::uint16_t milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-std::uint8_t shootingRecordWidth(const std::array<std::uint8_t,8>& mask) {
+std::uint8_t calculateShootingRecordWidth(const std::array<std::uint8_t,8>& mask) {
     static constexpr std::array<std::uint8_t,8> allowed{
         0xff,0xff,0x0c,0x3f,0x7f,0xf8,0x7f,0x3f};
     for (std::size_t i=0;i<mask.size();++i)
@@ -61,6 +61,11 @@ std::uint8_t shootingRecordWidth(const std::array<std::uint8_t,8>& mask) {
     return static_cast<std::uint8_t>(total<=8?0x08:total<=16?0x10:0x20);
 }
 } // namespace
+
+std::uint8_t shootingDataRecordWidth(
+    const std::array<std::uint8_t,8>& mask) {
+    return calculateShootingRecordWidth(mask);
+}
 
 CameraProtocolSession::CameraProtocolSession(BridgeClient& bridge) : bridge_(bridge) {}
 
@@ -679,7 +684,7 @@ std::vector<CameraPacket> CameraProtocolSession::setPfnBlock(
 
 std::vector<CameraPacket> CameraProtocolSession::setShootingDataMask(
     const std::array<std::uint8_t,8>& mask) {
-    const auto width=shootingRecordWidth(mask);
+    const auto width=shootingDataRecordWidth(mask);
     const bool ownsSession=!sessionActive_;
     auto output=ownsSession?beginSession():std::vector<CameraPacket>{};
     try {

@@ -31,6 +31,11 @@ enum class CfnBank {
     registered3,
 };
 
+// Returns the E7 internal record-width class (8, 16, or 32 bytes) after
+// validating the complete eight-byte E9 shooting-data mask.
+std::uint8_t shootingDataRecordWidth(
+    const std::array<std::uint8_t, 8>& mask);
+
 class CameraProtocolSession {
 public:
     explicit CameraProtocolSession(BridgeClient& bridge);
