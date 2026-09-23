@@ -6,9 +6,9 @@ Arduino source tree.
 
 The repository now builds three targets:
 
-- `open1v-core.lib` — reusable connection/session library for CLI or GUI clients
-- `open1V.exe` — human-readable command-line client linked to `open1v-core`
-- `open1V-debug.exe` — protocol diagnostics, raw bridge commands, offline tests,
+- `open1v-core` — reusable connection/session library for CLI or GUI clients
+- `open1V` — human-readable command-line client linked to `open1v-core`
+- `open1V-debug` — protocol diagnostics, raw bridge commands, offline tests,
   and explicitly authorized diagnostic writes
 
 See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
@@ -27,7 +27,7 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
 - Readable commands and `*-debug` commands use that same protocol layer. The
   readable CLI decodes confirmed fields and omits fields the original
   application does not display; diagnostics print the raw packets. Diagnostic
-  commands are exposed only by `open1V-debug.exe`.
+  commands are exposed only by `open1V-debug`.
 - `BridgeClient` owns the documented `O1` framing protocol.
 - `ITransport` isolates platform transport from both layers.
 - `SerialTransport` is the default adapter and auto-detects the
@@ -67,15 +67,12 @@ uses sysfs and needs no additional library. An explicit device may be selected
 with `--port /dev/cu.usbmodem...` on macOS or `--port /dev/ttyACM0` on Linux.
 The `--winusb` option remains Windows-only.
 
-## Commands
+## User commands
+
+`open1V` is the normal interactive and readable command-line application.
+Running it without arguments opens `camera console`.
 
 ```text
-open1V-debug self-test
-open1V-debug frame ping
-open1V-debug bridge ping
-open1V-debug bridge status
-open1V-debug bridge link-status
-open1V-debug camera identify
 open1V camera id
 open1V camera cfn
 open1V camera pfn
@@ -84,6 +81,48 @@ open1V camera info
 open1V camera console
 open1V camera set-id --id 12
 open1V camera set-clock --clock 260922120000
+```
+
+`id`, `cfn`, `pfn`, and `clock` decode fields shown by the original application
+into readable values and close PC mode after reading. `camera info` reads all
+four groups in one physical PC-mode session and exits once.
+
+Running `open1V` without arguments enters `camera console` automatically.
+Startup performs only the handshake and displays `Camera: EOS-1V` plus the
+camera ID, so the prompt appears quickly. `show` explicitly reads all current
+settings. The console accepts `cfn`, `pfn`, `set id`, and `set clock` (`set
+time` remains a compatibility alias). PC mode remains active until `exit` or
+end-of-input, when the only F2 is sent.
+
+`cfn` first asks for `current`, `1`, `2`, or `3`. Inside `cfn-edit`, any number
+of options can be staged. `commit` writes and verifies all differences, while
+`discard` or `q` returns without writing. `pfn` provides the same staged edit,
+preview, commit, and discard flow for P.Fn settings.
+
+`set clock` can synchronize with the local system clock or accept a complete
+manual `YYMMDDhhmmss` value. `set time` remains a compatibility alias.
+
+P.Fn-27 includes both its ON/OFF bit and a dial-selection value from the fifth
+`DD/DE` payload byte: `0` Main Dial only, `1` Quick Control Dial only, and `2`
+Both dials. The console displays and verifies both parts separately.
+If the handshake cannot be established, the console reports that the camera is
+not connected or is not in PC mode and does not enter the command prompt.
+
+## Debug and diagnostics
+
+`open1V-debug` is a separate diagnostic executable. It exposes raw bridge and
+camera packets, offline tests, protocol experiments, and guarded diagnostic
+writes. These commands are intended for development and hardware investigation.
+
+Read-only and session-control commands:
+
+```text
+open1V-debug self-test
+open1V-debug frame ping
+open1V-debug bridge ping
+open1V-debug bridge status
+open1V-debug bridge link-status
+open1V-debug camera identify
 open1V-debug camera read-settings
 open1V-debug camera handshake-debug
 open1V-debug camera settings-debug
@@ -95,6 +134,11 @@ open1V-debug camera film-header-debug
 open1V-debug camera film-download-debug
 open1V-debug camera continuous-debug
 open1V-debug camera exit-debug
+```
+
+Diagnostic write commands require the explicit `--allow-write-debug` option:
+
+```text
 open1V-debug camera pfn4-roundtrip-debug --allow-write-debug
 open1V-debug camera clock-set-debug --clock YYMMDDhhmmss --allow-write-debug
 open1V-debug camera shooting-width16-roundtrip-debug --allow-write-debug
@@ -118,45 +162,11 @@ the payload has been sent it is never resent on an ambiguous timeout. Round-trip
 diagnostics therefore perform their test write and restoration in the same
 physical PC-mode session without sending `F2` between them.
 
-Use `--port COM3` (Windows) or a `/dev/...` path after a command to select a port explicitly, or `--winusb`
-to exercise the reserved WinUSB transport. Camera behavior remains independent
-of either transport.
+`self-test` is fully offline and is the first diagnostic check to run after
+building.
 
-`self-test` is fully offline and is the first check to run after building.
+## Transport options
 
-`id`, `cfn`, `pfn`, and `clock` decode fields shown by the original application
-into readable values and close PC mode after reading. They do not implement a
-second communication path. Opaque fields remain available only in raw
-`*-debug` output.
-`camera info` reads all four groups in one physical PC-mode session and exits once.
-
-Running `open1V.exe` without arguments enters `camera console` automatically.
-`camera console` is the interactive human-readable mode. Startup performs only
-the handshake and displays `Camera: EOS-1V` plus the camera ID, so the prompt
-appears quickly. `show` explicitly reads all current settings. The console accepts
-`cfn`, `pfn`, `set id`, and `set clock` (`set time` remains a compatibility alias).
-`cfn` and `pfn` each open a guided read/modify prompt:
-it refreshes the target's current value, asks for a field number where needed,
-shows its available choices, then validates and verifies the write. Entering
-`q` at any prompt returns to the main console. PC mode remains active until
-`exit` or end-of-input, when the only F2 is sent.
-
-`cfn` first asks for `current`, `1`, `2`, or `3`. It then displays only the
-selected bank and writes through the matching current/registered command pair.
-Inside `cfn-edit`, any number of options can be staged. The complete selected
-bank is shown after every change; `commit` writes and verifies all differences,
-while `discard` or `q` returns without writing.
-
-`pfn` similarly enters `pfn-edit`. ON/OFF and supported sub-values are
-staged in a complete P.Fn preview. `commit` is available only in that sub-state
-and performs the verified writes; `discard` or `q` abandons them.
-
-`set clock` offers two choices: `1) Sync with system`, which uses the Windows
-local system clock, and `2) Set manually`, which accepts the complete
-`YYMMDDhhmmss` value. `set time` remains accepted as a compatibility alias.
-
-P.Fn-27 includes both its ON/OFF bit and a dial-selection value from the fifth
-`DD/DE` payload byte: `0` Main Dial only, `1` Quick Control Dial only, and `2`
-Both dials. The console displays and verifies both parts separately.
-If the handshake cannot be established, the console reports that the camera is
-not connected or is not in PC mode and does not enter the command prompt.
+Use `--port COM3` on Windows or a `/dev/...` path on macOS and Linux to select
+a serial port explicitly. `--winusb` selects the reserved Windows-only WinUSB
+transport. Camera protocol behavior remains independent of the transport.
