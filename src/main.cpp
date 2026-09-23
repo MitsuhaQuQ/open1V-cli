@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -20,12 +21,21 @@
 #include <string>
 
 namespace {
+std::uint64_t parseUnsigned(const std::string& text,std::uint64_t minimum,std::uint64_t maximum,const char* field){
+    if(text.empty())throw std::runtime_error(std::string(field)+" is empty");
+    std::uint64_t value=0;const auto result=std::from_chars(text.data(),text.data()+text.size(),value,10);
+    if(result.ec==std::errc::result_out_of_range)throw std::runtime_error(std::string(field)+" is too large");
+    if(result.ec!=std::errc{}||result.ptr!=text.data()+text.size())throw std::runtime_error(std::string(field)+" must contain digits only");
+    if(value<minimum||value>maximum)throw std::runtime_error(std::string(field)+" is outside its valid range");
+    return value;
+}
 #ifdef OPEN1V_DEBUG_CLI
 std::vector<std::uint8_t> parseHex(std::string text) {
     text.erase(std::remove_if(text.begin(), text.end(),
         [](char c) { return c == ' ' || c == ':' || c == '-'; }), text.end());
     if (text.empty() || text.size() % 2 != 0)
         throw std::runtime_error("hex payload must contain complete bytes");
+    if (text.size() > 510) throw std::runtime_error("hex payload exceeds 255 bytes");
     std::vector<std::uint8_t> result;
     for (std::size_t i = 0; i < text.size(); i += 2) {
         std::size_t parsed = 0;
@@ -146,9 +156,9 @@ const std::vector<PfnChoice>& apertureChoices(){
 }
 std::string pfnChoiceName(std::uint8_t value,const std::vector<PfnChoice>& choices){for(const auto& choice:choices)if(choice.second==value)return choice.first;return "wire 0x"+hexByte(value);}
 std::string compactLower(std::string text){text.erase(std::remove_if(text.begin(),text.end(),[](unsigned char c){return std::isspace(c)!=0;}),text.end());std::transform(text.begin(),text.end(),text.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});return text;}
-double positiveNumber(const std::string& text,const char* field){std::size_t used=0;const auto value=std::stod(text,&used);if(used!=text.size()||!std::isfinite(value)||value<=0)throw std::runtime_error(std::string(field)+" must be a positive number");return value;}
-double parseShutterSeconds(std::string text){text=compactLower(std::move(text));if(!text.empty()&&(text.back()=='s'||text.back()=='\"'))text.pop_back();const auto slash=text.find('/');if(slash!=std::string::npos){const auto numerator=positiveNumber(text.substr(0,slash),"shutter numerator");const auto denominator=positiveNumber(text.substr(slash+1),"shutter denominator");return numerator/denominator;}return positiveNumber(text,"shutter speed");}
-double parseAperture(std::string text){text=compactLower(std::move(text));if(text.starts_with("f/"))text.erase(0,2);else if(text.starts_with('f'))text.erase(0,1);return positiveNumber(text,"aperture");}
+double positiveNumber(const std::string& text,const char* field){if(text.empty()||text.size()>32)throw std::runtime_error(std::string(field)+" has an invalid length");bool dot=false,digit=false;for(const unsigned char c:text){if(std::isdigit(c)){digit=true;continue;}if(c=='.'&&!dot){dot=true;continue;}throw std::runtime_error(std::string(field)+" must contain only digits and one decimal point");}if(!digit)throw std::runtime_error(std::string(field)+" must contain a digit");std::size_t used=0;const auto value=std::stod(text,&used);if(used!=text.size()||!std::isfinite(value)||value<=0)throw std::runtime_error(std::string(field)+" must be a positive number");return value;}
+double parseShutterSeconds(std::string text){text=compactLower(std::move(text));if(!text.empty()&&(text.back()=='s'||text.back()=='\"'))text.pop_back();const auto slash=text.find('/');double value=0;if(slash!=std::string::npos){if(text.find('/',slash+1)!=std::string::npos)throw std::runtime_error("shutter speed contains more than one slash");const auto numerator=positiveNumber(text.substr(0,slash),"shutter numerator");const auto denominator=positiveNumber(text.substr(slash+1),"shutter denominator");value=numerator/denominator;}else value=positiveNumber(text,"shutter speed");if(!std::isfinite(value)||value<1.0/8000.0||value>30.0)throw std::runtime_error("shutter speed must be between 1/8000 s and 30 s");return value;}
+double parseAperture(std::string text){text=compactLower(std::move(text));if(text.starts_with("f/"))text.erase(0,2);else if(text.starts_with('f'))text.erase(0,1);const auto value=positiveNumber(text,"aperture");if(value<1.0||value>91.0)throw std::runtime_error("aperture must be between f/1.0 and f/91");return value;}
 const PfnChoice& nearestExposureChoice(double target,const std::vector<PfnChoice>& choices,bool shutter){return *std::min_element(choices.begin(),choices.end(),[=](const PfnChoice& left,const PfnChoice& right){const auto physical=[=](const PfnChoice& choice){return shutter?std::exp2((0x38-choice.second)/8.0):std::exp2((choice.second-0x08)/16.0);};return std::abs(std::log2(target/physical(left)))<std::abs(std::log2(target/physical(right)));});}
 bool pfnEnabled(const std::vector<std::uint8_t>& b,int n){const int g=(n-1)/8,bit=(n-1)%8;return (b.at(2+3-g)&(1u<<bit))!=0;}
 const char* pfnSwitchDescription(int n){switch(n){
@@ -215,9 +225,10 @@ void printPfn(const std::vector<open1v::CameraPacket>& p,
 }
 std::vector<std::uint8_t>& mutablePacket(std::vector<open1v::CameraPacket>& packets,std::uint8_t command){for(auto& p:packets)if(!p.bytes.empty()&&p.bytes[0]==command)return p.bytes;throw std::runtime_error("camera block missing");}
 bool promptChoice(const char* prompt,const std::vector<std::string>& names,std::size_t& selected){
+    if(names.empty())throw std::runtime_error("selection list is empty");
     for(std::size_t i=0;i<names.size();++i)std::cout<<"  "<<i+1<<") "<<names[i]<<'\n';
     std::cout<<prompt;std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return false;
-    std::size_t used=0;const auto value=std::stoul(text,&used);if(used!=text.size()||value<1||value>names.size())throw std::runtime_error("selection is outside the listed range");selected=value-1;return true;
+    const auto value=parseUnsigned(text,1,names.size(),"selection");selected=static_cast<std::size_t>(value-1);return true;
 }
 void editPfnParameters(std::vector<open1v::CameraPacket>& packets,int n){
     auto u8=[](unsigned value){return static_cast<std::uint8_t>(value);};
@@ -234,8 +245,8 @@ void editPfnParameters(std::vector<open1v::CameraPacket>& packets,int n){
     if(n==12){chooseCode("AI Servo tracking sensitivity",0xcb,0,{{"Slowest",u8(0x00)},{"Slow",u8(0x20)},{"Standard",u8(0x40)},{"Fast",u8(0x60)},{"Fastest",u8(0x80)}});return;}
     if(n==19){std::size_t item;if(!chooseSub({"Ultra-high-speed continuous","High-speed continuous","Low-speed continuous"},item))return;std::vector<std::pair<std::string,std::uint8_t>> rates;for(int fps=1;fps<=10;++fps)rates.push_back({std::to_string(fps)+" fps",static_cast<std::uint8_t>(0x14-fps*2)});const std::size_t offset=item==0?3:item==1?2:1;chooseCode("Continuous shooting speed",0xcc,offset,rates);if(item==0)mutablePacket(packets,0xcc).at(2)=mutablePacket(packets,0xcc).at(5);return;}
     if(n==27){chooseCode("Electronic dials",0xdd,4,{{"Main Dial only",u8(0)},{"Quick Control Dial only",u8(1)},{"Both dials",u8(2)}});return;}
-    if(n==20||n==29){std::cout<<(n==20?"Number of continuous frames":"Remaining-roll warning threshold")<<"\nValue (q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;std::size_t used=0;const auto value=std::stoul(text,&used);const auto max=n==20?36ul:10ul;if(used!=text.size()||value<1||value>max)throw std::runtime_error("value is outside its valid range");mutablePacket(packets,n==20?0xca:0xce).at(2)=static_cast<std::uint8_t>(value);return;}
-    if(n==23){std::size_t item;if(!chooseSub({"Timer 1","Timer 2","Post-release timer"},item))return;std::cout<<"Seconds 0..3600 (q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;std::size_t used=0;const auto seconds=std::stoul(text,&used);if(used!=text.size()||seconds>3600)throw std::runtime_error("timer must be 0..3600 seconds");const auto command=std::array<std::uint8_t,3>{0xc7,0xc8,0xc0}[item];auto& b=mutablePacket(packets,command);const auto raw=seconds*16;b.at(2)=static_cast<std::uint8_t>(raw>>8);b.at(3)=static_cast<std::uint8_t>(raw);return;}
+    if(n==20||n==29){std::cout<<(n==20?"Number of continuous frames":"Remaining-roll warning threshold")<<"\nValue (q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;const auto value=parseUnsigned(text,1,n==20?36:10,"value");mutablePacket(packets,n==20?0xca:0xce).at(2)=static_cast<std::uint8_t>(value);return;}
+    if(n==23){std::size_t item;if(!chooseSub({"Timer 1","Timer 2","Post-release timer"},item))return;std::cout<<"Seconds 0..3600 (q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;const auto seconds=parseUnsigned(text,0,3600,"timer");const auto command=std::array<std::uint8_t,3>{0xc7,0xc8,0xc0}[item];auto& b=mutablePacket(packets,command);const auto raw=seconds*16;b.at(2)=static_cast<std::uint8_t>(raw>>8);b.at(3)=static_cast<std::uint8_t>(raw);return;}
     if(n==25){std::size_t item;if(!chooseSub({"Shooting mode","Metering mode","Film advance mode","AF mode","Focusing point selection"},item))return;
         if(item==0)chooseCode("Shooting mode",0xcd,0,{{"Program AE",u8(0x10)},{"Shutter-priority AE",u8(0x20)},{"Aperture-priority AE",u8(0x40)},{"Depth-of-field AE",u8(0x08)},{"Manual exposure",u8(0x80)},{"Bulb",u8(0x04)}});
         else if(item==1){auto& b=mutablePacket(packets,0xcd);const auto preserved=static_cast<std::uint8_t>(b.at(3)&0xf9);chooseCode("Metering mode",0xcd,1,{{"Evaluative",u8(preserved|0x04)},{"Partial",u8(preserved|0x00)},{"Spot",u8(preserved|0x02)},{"Center-weighted average",u8(preserved|0x06)}});}
@@ -245,9 +256,8 @@ void editPfnParameters(std::vector<open1v::CameraPacket>& packets,int n){
     if(n==30){chooseCode("Film-ID imprint density",0xcf,0,{{"Dark",u8(0x02)},{"Light",u8(0x00)}});return;}
 }
 unsigned bcd(std::uint8_t v){if((v>>4)>9||(v&15)>9)throw std::runtime_error("invalid BCD");return (v>>4)*10+(v&15);}
-void printClock(const std::vector<open1v::CameraPacket>& p){const auto& f=findPacket(p,0xf3);
-    const std::array<unsigned,6> value{bcd(f.at(2)),bcd(f.at(3)),bcd(f.at(4)),bcd(f.at(5)),bcd(f.at(6)),bcd(f.at(7))};
-    if(value[1]<1||value[1]>12||value[2]<1||value[2]>31||value[3]>23||value[4]>59||value[5]>59)throw std::runtime_error("camera returned an invalid date/time");
+std::array<unsigned,6> validateClock(const std::array<std::uint8_t,6>& raw){const std::array<unsigned,6> value{bcd(raw[0]),bcd(raw[1]),bcd(raw[2]),bcd(raw[3]),bcd(raw[4]),bcd(raw[5])};if(value[1]<1||value[1]>12||value[3]>23||value[4]>59||value[5]>59)throw std::runtime_error("date/time is outside its valid range");static constexpr std::array<unsigned,12> days{31,28,31,30,31,30,31,31,30,31,30,31};auto maximum=days[value[1]-1];const auto year=2000+value[0];if(value[1]==2&&((year%4==0&&year%100!=0)||year%400==0))maximum=29;if(value[2]<1||value[2]>maximum)throw std::runtime_error("day is invalid for the selected month");return value;}
+void printClock(const std::vector<open1v::CameraPacket>& p){const auto& f=findPacket(p,0xf3);const std::array<std::uint8_t,6> raw{f.at(2),f.at(3),f.at(4),f.at(5),f.at(6),f.at(7)};const auto value=validateClock(raw);
     std::ostringstream text; text<<"Camera local time = 20"<<std::setfill('0')<<std::setw(2)<<value[0]<<'-'<<std::setw(2)<<value[1]<<'-'<<std::setw(2)<<value[2]<<' '<<std::setw(2)<<value[3]<<':'<<std::setw(2)<<value[4]<<':'<<std::setw(2)<<value[5];
     std::cout<<text.str()<<'\n';}
 
@@ -384,7 +394,7 @@ int main(int argc, char** argv) {
                 std::cout<<"Camera ID = "<<unsigned(detected.at(3)&0x7f)<<'\n';
                 std::string line;
                 auto ask=[&](const char* prompt,std::string& answer){std::cout<<prompt; if(!std::getline(std::cin,answer))return false; return answer!="q"&&answer!="Q";};
-                auto number=[](const std::string& text){std::size_t used=0;auto value=std::stoul(text,&used);if(used!=text.size())throw std::runtime_error("enter a number or q");return value;};
+                auto number=[](const std::string& text){return parseUnsigned(text,0,255,"number");};
                 while(std::cout<<"\nCommands: show | cfn | pfn | set id | set clock | exit\n"
                                && std::cout<<"open1V> " && std::getline(std::cin,line)){
                     std::istringstream input(line); std::string command,target,extra; input>>command>>target>>extra;
@@ -445,7 +455,7 @@ int main(int argc, char** argv) {
                             } else if(value=="2") {
                                 if(!ask("Date and time YYMMDDhhmmss (q=back): ",value))continue; applyDigits(value,0,6);
                             } else throw std::runtime_error("selection must be 1 or 2");
-                            auto result=protocol.setClock(v); printClock({result.back()}); std::cout<<"Camera time write verified\n";
+                            (void)validateClock(v);auto result=protocol.setClock(v); printClock({result.back()}); std::cout<<"Camera time write verified\n";
                         }
                         else if(!command.empty()) std::cout<<"Unknown command\n";
                     } catch(const std::exception& e) { std::cout<<"Not changed: "<<e.what()<<'\n'; }
@@ -454,12 +464,12 @@ int main(int argc, char** argv) {
             } catch(...) { try{if(opened)protocol.endSession();}catch(...){} throw; }
         } else if (group == "camera" && action == "set-id") {
             if(idText.empty())throw std::runtime_error("set-id requires --id");
-            open1v::CameraProtocolSession protocol(bridge); auto packets=protocol.setCameraId(static_cast<std::uint8_t>(std::stoul(idText)));
+            const auto parsedId=parseUnsigned(idText,0,99,"camera ID");open1v::CameraProtocolSession protocol(bridge); auto packets=protocol.setCameraId(static_cast<std::uint8_t>(parsedId));
             const auto& id=findPacket(packets,0xf1); std::cout<<"Camera ID = "<<unsigned(id.at(3)&0x7f)<<'\n';
         } else if (group == "camera" && action == "set-clock") {
             if(debugArgument.size()!=12)throw std::runtime_error("set-clock requires --clock YYMMDDhhmmss");
             std::array<std::uint8_t,6> value{}; for(std::size_t i=0;i<6;++i){if(debugArgument[i*2]<'0'||debugArgument[i*2]>'9'||debugArgument[i*2+1]<'0'||debugArgument[i*2+1]>'9')throw std::runtime_error("clock contains a non-digit");value[i]=static_cast<std::uint8_t>(((debugArgument[i*2]-'0')<<4)|(debugArgument[i*2+1]-'0'));}
-            open1v::CameraProtocolSession protocol(bridge); auto packets=protocol.setClock(value); printClock(packets);
+            (void)validateClock(value);open1v::CameraProtocolSession protocol(bridge); auto packets=protocol.setClock(value); printClock(packets);
 #ifdef OPEN1V_DEBUG_CLI
         } else if (group == "camera" && action == "read-settings") {
             open1v::CameraProtocolSession protocol(bridge);
