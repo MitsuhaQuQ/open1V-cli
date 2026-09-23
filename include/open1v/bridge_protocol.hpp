@@ -15,6 +15,16 @@ enum class MessageType : std::uint8_t {
     linkStatus = 0x03,
     exchange = 0x10,
     release = 0x11,
+    profiledExchange = 0x12,
+};
+
+// Electrical receive timing is selected by the bridge firmware.  These are
+// transport profiles, not EOS command or application concepts.
+enum class ExchangeProfile : std::uint8_t {
+    quick = 0,
+    normal = 1,
+    slowFirstByte = 2,
+    writeReply = 3,
 };
 
 struct Frame {

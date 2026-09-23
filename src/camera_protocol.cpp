@@ -12,16 +12,6 @@ namespace open1v {
 namespace {
 using namespace std::chrono_literals;
 
-bool packetValid(const std::vector<std::uint8_t>& packet,
-                 std::uint8_t command) {
-    if (packet.size() < 3 || packet[0] != command ||
-        packet.size() != static_cast<std::size_t>(packet[1]) + 3) return false;
-    std::uint8_t sum = 0;
-    for (std::size_t i = 2; i + 1 < packet.size(); ++i)
-        sum = static_cast<std::uint8_t>(sum + packet[i]);
-    return sum == packet.back();
-}
-
 void pause(std::uint16_t milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
@@ -67,7 +57,8 @@ std::uint8_t shootingDataRecordWidth(
     return calculateShootingRecordWidth(mask);
 }
 
-CameraProtocolSession::CameraProtocolSession(BridgeClient& bridge) : bridge_(bridge) {}
+CameraProtocolSession::CameraProtocolSession(BridgeClient& bridge)
+    : bridge_(bridge), requests_(bridge) {}
 
 std::vector<CameraPacket> CameraProtocolSession::writePfn(
     std::uint8_t readCommand, std::span<const std::uint8_t> expected,
@@ -132,65 +123,16 @@ std::vector<CameraPacket> CameraProtocolSession::writeCfn(
 
 std::vector<std::uint8_t> CameraProtocolSession::fixed(
     std::uint8_t value, std::uint16_t expected, std::uint16_t timeoutMs) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        const auto result = bridge_.exchangeResult(
-            std::span<const std::uint8_t>(&value, 1), expected, timeoutMs, 50);
-        if (result.status == 0 && packetValid(result.bytes, value) &&
-            result.bytes.size() == expected) return result.bytes;
-        if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
-            serviceAsyncF4();
-        }
-        pause(attempt == 0 ? 100 : 150);
-    }
-    throw std::runtime_error("debug fixed-length camera command failed");
+    const auto profile = timeoutMs <= 500 ? ExchangeProfile::quick :
+        (timeoutMs >= 1500 ? ExchangeProfile::slowFirstByte : ExchangeProfile::normal);
+    return requests_.fixed(value, expected, profile);
 }
 
 std::vector<std::uint8_t> CameraProtocolSession::variable(
     std::uint8_t value, std::uint16_t capacity, std::uint16_t timeoutMs) {
-    // A camera-originated F4 can arrive between any two P.Fn blocks. The
-    // original Remote answers F4 and requests F6 before retrying the pending
-    // read. Allow a longer bounded retry window because the camera may be
-    // busy completing that asynchronous status update.
-    for (int attempt = 0; attempt < 8; ++attempt) {
-        const auto result = bridge_.exchangeResult(
-            std::span<const std::uint8_t>(&value, 1), capacity, timeoutMs, 50);
-        if (packetValid(result.bytes, value)) return result.bytes;
-        if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
-            serviceAsyncF4();
-        }
-        pause(attempt < 2 ? 100 : 200);
-    }
-    std::ostringstream message;
-    message << "debug variable-length camera command 0x"
-            << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
-            << static_cast<unsigned>(value) << " failed";
-    throw std::runtime_error(message.str());
-}
-
-void CameraProtocolSession::serviceAsyncF4() {
-    const std::uint8_t acknowledge = 0xf4;
-    (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
-    pause(2);
-
-    // F6 is the status response that the original application requests after
-    // acknowledging an unsolicited F4. Failure is left to the pending read's
-    // normal retry budget; the camera may still be busy and return no bytes.
-    const std::uint8_t status = 0xf6;
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        try {
-            const auto result = bridge_.exchangeResult(
-                std::span<const std::uint8_t>(&status, 1), 17, 1000, 50);
-            if (result.status == 0 && packetValid(result.bytes, status)) return;
-            if (result.bytes == std::vector<std::uint8_t>{0xf4}) {
-                (void)bridge_.exchange(std::span<const std::uint8_t>(&acknowledge, 1), 0);
-                pause(2);
-            }
-        } catch (...) {
-            // Do not turn an asynchronous status refresh into a hard failure
-            // for the read that was already in progress.
-        }
-        pause(50);
-    }
+    const auto profile = timeoutMs <= 500 ? ExchangeProfile::quick :
+        (timeoutMs >= 1500 ? ExchangeProfile::slowFirstByte : ExchangeProfile::normal);
+    return requests_.variable(value, capacity, profile);
 }
 
 void CameraProtocolSession::begin(std::vector<CameraPacket>& output) {

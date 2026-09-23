@@ -15,7 +15,10 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
 
 ## Boundaries
 
-- `CameraProtocolSession` is the single camera communication layer. CLI calls
+- `CameraRequest` is the business-neutral request layer. It validates EOS
+  packets, handles bounded retries and asynchronous F4 traffic, and selects a
+  bridge receive profile without knowing which setting or record is requested.
+- `CameraProtocolSession` composes those requests into camera workflows. CLI calls
   `readOnce()` for handshake, one selected task, F2 shutdown, and error cleanup.
   A future GUI can instead call `beginSession()`, any number of `perform()`
   operations, and one `endSession()`. All paths return raw `CameraPacket`
@@ -40,7 +43,10 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
   firmware work. It also recognizes the Zadig interface GUID used by the
   experimental Minima `04A9:3040` identity build; this path must be selected
   explicitly and still transports O1 frames.
-- The Arduino project only forwards framed requests to its camera-side UART.
+- The Arduino bridge owns camera-side electrical behavior: bit timing, the D5
+  high-level assist circuit, stale-RX draining, line release, and concrete
+  receive windows. New clients select a neutral receive profile; legacy bridge
+  exchange remains supported for older firmware.
 
 The first camera operation is deliberately read-only: `camera identify`.
 

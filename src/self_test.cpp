@@ -22,15 +22,19 @@ public:
             payload.insert(payload.end(), {'o', 'p', 'e', 'n', '1', 'V'});
         } else if (request.type == static_cast<std::uint8_t>(MessageType::status)) {
             payload.insert(payload.end(), {1, 2, 3});
-        } else if (request.type == static_cast<std::uint8_t>(MessageType::exchange)) {
+        } else if (request.type == static_cast<std::uint8_t>(MessageType::exchange) ||
+                   request.type == static_cast<std::uint8_t>(MessageType::profiledExchange)) {
             std::vector<std::uint8_t> camera;
-            if (request.payload.size() == 8) {
+            const bool profiled = request.type ==
+                static_cast<std::uint8_t>(MessageType::profiledExchange);
+            const std::size_t commandOffset = profiled ? 5 : 8;
+            if (request.payload.size() == commandOffset) {
                 ++idlePolls_;
                 payload = {4, 0, 0};
                 return encodeFrame({static_cast<std::uint8_t>(request.type | 0x80),
                                     request.sequence, payload});
             }
-            const auto command = request.payload.at(8);
+            const auto command = request.payload.at(commandOffset);
             if (command == 0xff) { ++helloCount_; camera = {0xf4}; }
             if (command == 0xf6) camera = {0xf6,0x0e,0x38,0xff,0x1a,0x17,0x41,0x18,
                                            0x10,0x1c,0x00,0x04,0x00,0x00,0x00,0x00,0xf1};

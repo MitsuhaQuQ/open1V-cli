@@ -99,6 +99,43 @@ ExchangeResult BridgeClient::exchangeResult(
             {response.payload.begin() + 3, response.payload.end()}};
 }
 
+ExchangeResult BridgeClient::exchangeProfiled(
+    std::span<const std::uint8_t> tx, std::uint16_t expectedBytes,
+    ExchangeProfile profile) {
+    if (tx.size() > 64) throw std::runtime_error("camera transmission is too large");
+    if (!profiledExchangeUnsupported_) {
+        std::vector<std::uint8_t> payload;
+        appendLe16(payload, expectedBytes);
+        payload.push_back(static_cast<std::uint8_t>(profile));
+        appendLe16(payload, static_cast<std::uint16_t>(tx.size()));
+        payload.insert(payload.end(), tx.begin(), tx.end());
+        auto response = request(MessageType::profiledExchange, payload, 12000, false);
+        // Firmware predating profiled exchange reports a one-byte unknown-type
+        // status. Cache that fact and retain wire compatibility.
+        if (response.payload.size() == 1 && response.payload[0] == 0x01) {
+            profiledExchangeUnsupported_ = true;
+        } else {
+            if (response.payload.size() < 3)
+                throw std::runtime_error("short profiled exchange response");
+            const auto count = readLe16(response.payload, 1);
+            if (response.payload.size() != static_cast<std::size_t>(count) + 3)
+                throw std::runtime_error("inconsistent profiled exchange length");
+            return {response.payload[0],
+                    {response.payload.begin() + 3, response.payload.end()}};
+        }
+    }
+
+    std::uint16_t first = 1000;
+    std::uint16_t between = 50;
+    switch (profile) {
+    case ExchangeProfile::quick: first = 500; break;
+    case ExchangeProfile::normal: break;
+    case ExchangeProfile::slowFirstByte: first = 1500; break;
+    case ExchangeProfile::writeReply: first = 2000; break;
+    }
+    return exchangeResult(tx, expectedBytes, first, between);
+}
+
 void BridgeClient::release() {
     (void)request(MessageType::release, std::span<const std::uint8_t>{});
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "open1v/bridge_client.hpp"
+#include "open1v/camera_request.hpp"
 
 #include <array>
 #include <string>
@@ -96,7 +97,6 @@ public:
 private:
     void begin(std::vector<CameraPacket>& output);
     void nextAction(std::vector<CameraPacket>& output);
-    void serviceAsyncF4();
     void close();
     std::vector<std::uint8_t> fixed(std::uint8_t command,
                                     std::uint16_t expected,
@@ -114,6 +114,7 @@ private:
                    std::span<const std::uint8_t> original,
                    std::span<const std::uint8_t> test);
     BridgeClient& bridge_;
+    CameraRequest requests_;
     bool sessionActive_{};
     bool actionUsed_{};
 };

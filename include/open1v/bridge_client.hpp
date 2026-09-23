@@ -43,6 +43,9 @@ public:
                                   std::uint16_t expectedBytes,
                                   std::uint16_t firstByteTimeoutMs = 500,
                                   std::uint16_t interByteTimeoutMs = 50);
+    ExchangeResult exchangeProfiled(std::span<const std::uint8_t> tx,
+                                    std::uint16_t expectedBytes,
+                                    ExchangeProfile profile);
     void release();
 
 private:
@@ -50,6 +53,7 @@ private:
                   int timeoutMs = 1000, bool requireOk = true);
     ITransport& transport_;
     std::uint16_t nextSequence_{1};
+    bool profiledExchangeUnsupported_{};
 };
 
 } // namespace open1v
