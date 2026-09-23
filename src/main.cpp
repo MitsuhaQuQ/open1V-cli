@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <iomanip>
@@ -144,6 +145,11 @@ const std::vector<PfnChoice>& apertureChoices(){
     return values;
 }
 std::string pfnChoiceName(std::uint8_t value,const std::vector<PfnChoice>& choices){for(const auto& choice:choices)if(choice.second==value)return choice.first;return "wire 0x"+hexByte(value);}
+std::string compactLower(std::string text){text.erase(std::remove_if(text.begin(),text.end(),[](unsigned char c){return std::isspace(c)!=0;}),text.end());std::transform(text.begin(),text.end(),text.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});return text;}
+double positiveNumber(const std::string& text,const char* field){std::size_t used=0;const auto value=std::stod(text,&used);if(used!=text.size()||!std::isfinite(value)||value<=0)throw std::runtime_error(std::string(field)+" must be a positive number");return value;}
+double parseShutterSeconds(std::string text){text=compactLower(std::move(text));if(!text.empty()&&(text.back()=='s'||text.back()=='\"'))text.pop_back();const auto slash=text.find('/');if(slash!=std::string::npos){const auto numerator=positiveNumber(text.substr(0,slash),"shutter numerator");const auto denominator=positiveNumber(text.substr(slash+1),"shutter denominator");return numerator/denominator;}return positiveNumber(text,"shutter speed");}
+double parseAperture(std::string text){text=compactLower(std::move(text));if(text.starts_with("f/"))text.erase(0,2);else if(text.starts_with('f'))text.erase(0,1);return positiveNumber(text,"aperture");}
+const PfnChoice& nearestExposureChoice(double target,const std::vector<PfnChoice>& choices,bool shutter){return *std::min_element(choices.begin(),choices.end(),[=](const PfnChoice& left,const PfnChoice& right){const auto physical=[=](const PfnChoice& choice){return shutter?std::exp2((0x38-choice.second)/8.0):std::exp2((choice.second-0x08)/16.0);};return std::abs(std::log2(target/physical(left)))<std::abs(std::log2(target/physical(right)));});}
 bool pfnEnabled(const std::vector<std::uint8_t>& b,int n){const int g=(n-1)/8,bit=(n-1)%8;return (b.at(2+3-g)&(1u<<bit))!=0;}
 const char* pfnSwitchDescription(int n){switch(n){
 case 6:return "Register/switch shooting and metering modes";case 7:return "Repeat AEB during continuous shooting";
@@ -223,8 +229,8 @@ void editPfnParameters(std::vector<open1v::CameraPacket>& packets,int n){
         std::vector<std::string> names;for(const auto& m:modes){const bool allowed=(mutablePacket(packets,command).at(2)&m.second)!=0;names.push_back(m.first+" ["+(allowed?"Allowed":"Excluded")+"]");}
         std::size_t item;if(!chooseSub(names,item))return;std::size_t setting;if(!promptChoice("Setting (q=keep current): ",{"Allowed","Excluded"},setting))return;auto& value=mutablePacket(packets,command).at(2);if(setting==0)value|=modes[item].second;else value&=static_cast<std::uint8_t>(~modes[item].second);return;}
     if(n==3){chooseCode("Metering mode",0xc1,0,{{"Evaluative",u8(0x10)},{"Spot",u8(0x20)},{"Partial",u8(0x40)},{"Center-weighted average",u8(0x80)}});return;}
-    if(n==4){std::size_t item;if(!chooseSub({"Fastest shutter speed","Slowest shutter speed"},item))return;chooseCode(item?"Slowest shutter speed":"Fastest shutter speed",0xc3,item,shutterChoices());const auto& b=mutablePacket(packets,0xc3);if(b.at(2)<b.at(3))throw std::runtime_error("fastest shutter speed must not be slower than the slowest shutter speed");return;}
-    if(n==5){std::size_t item;if(!chooseSub({"Smallest aperture","Largest aperture"},item))return;chooseCode(item?"Largest aperture":"Smallest aperture",0xc4,item,apertureChoices());const auto& b=mutablePacket(packets,0xc4);if(b.at(2)<b.at(3))throw std::runtime_error("smallest aperture must not be wider than the largest aperture");return;}
+    if(n==4){std::size_t item;if(!chooseSub({"Fastest shutter speed","Slowest shutter speed"},item))return;std::cout<<(item?"Slowest":"Fastest")<<" shutter speed (examples: 1/300, 0.3s, 2; q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;const auto& selected=nearestExposureChoice(parseShutterSeconds(text),shutterChoices(),true);auto& b=mutablePacket(packets,0xc3);const auto other=b.at(2+(item?0:1));if((!item&&selected.second<other)||(item&&b.at(2)<selected.second))throw std::runtime_error("fastest shutter speed must not be slower than the slowest shutter speed");b.at(2+item)=selected.second;std::cout<<"Nearest camera setting: "<<selected.first<<" (wire 0x"<<hexByte(selected.second)<<")\n";return;}
+    if(n==5){std::size_t item;if(!chooseSub({"Smallest aperture","Largest aperture"},item))return;std::cout<<(item?"Largest":"Smallest")<<" aperture (examples: f/2.7, 5.6; q=keep current): ";std::string text;if(!std::getline(std::cin,text)||text=="q"||text=="Q")return;const auto& selected=nearestExposureChoice(parseAperture(text),apertureChoices(),false);auto& b=mutablePacket(packets,0xc4);const auto other=b.at(2+(item?0:1));if((!item&&selected.second<other)||(item&&b.at(2)<selected.second))throw std::runtime_error("smallest aperture must not be wider than the largest aperture");b.at(2+item)=selected.second;std::cout<<"Nearest camera setting: "<<selected.first<<" (wire 0x"<<hexByte(selected.second)<<")\n";return;}
     if(n==12){chooseCode("AI Servo tracking sensitivity",0xcb,0,{{"Slowest",u8(0x00)},{"Slow",u8(0x20)},{"Standard",u8(0x40)},{"Fast",u8(0x60)},{"Fastest",u8(0x80)}});return;}
     if(n==19){std::size_t item;if(!chooseSub({"Ultra-high-speed continuous","High-speed continuous","Low-speed continuous"},item))return;std::vector<std::pair<std::string,std::uint8_t>> rates;for(int fps=1;fps<=10;++fps)rates.push_back({std::to_string(fps)+" fps",static_cast<std::uint8_t>(0x14-fps*2)});const std::size_t offset=item==0?3:item==1?2:1;chooseCode("Continuous shooting speed",0xcc,offset,rates);if(item==0)mutablePacket(packets,0xcc).at(2)=mutablePacket(packets,0xcc).at(5);return;}
     if(n==27){chooseCode("Electronic dials",0xdd,4,{{"Main Dial only",u8(0)},{"Quick Control Dial only",u8(1)},{"Both dials",u8(2)}});return;}
