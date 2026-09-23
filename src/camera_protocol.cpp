@@ -25,6 +25,41 @@ bool packetValid(const std::vector<std::uint8_t>& packet,
 void pause(std::uint16_t milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
+
+std::uint8_t shootingRecordWidth(const std::array<std::uint8_t,8>& mask) {
+    static constexpr std::array<std::uint8_t,8> allowed{
+        0xff,0xff,0x0c,0x3f,0x7f,0xf8,0x7f,0x3f};
+    for (std::size_t i=0;i<mask.size();++i)
+        if ((mask[i] & static_cast<std::uint8_t>(~allowed[i])) != 0)
+            throw std::runtime_error("shooting-data mask contains an unknown bit");
+    if ((mask[0]&0xc0)!=0xc0 || (mask[1]&0x09)!=0x09)
+        throw std::runtime_error("shooting-data mask is missing a mandatory bit");
+    auto composite=[](std::uint8_t value,std::uint8_t bits,const char* name){
+        const auto selected=static_cast<std::uint8_t>(value&bits);
+        if(selected!=0&&selected!=bits)throw std::runtime_error(std::string(name)+" must be enabled or disabled as one field");
+        return selected==bits;
+    };
+    const bool focal=composite(mask[0],0x30,"focal length");
+    const bool bulb=composite(mask[2],0x0c,"bulb time");
+    const bool date=composite(mask[3],0x38,"capture date");
+    const bool time=composite(mask[3],0x07,"capture time");
+    const bool cfnLow=composite(mask[4],0x7f,"C.Fn snapshot");
+    const bool cfnHigh=composite(mask[5],0xf0,"C.Fn snapshot");
+    if(cfnLow!=cfnHigh)throw std::runtime_error("C.Fn snapshot mask is incomplete");
+    const bool focus=composite(mask[6],0x7f,"in-focus point data");
+    const bool battery=composite(mask[7],0x3f,"battery-load date/time");
+    if(bulb&&(mask[0]&0x04)==0)throw std::runtime_error("bulb time requires shutter speed");
+    if(focus&&(mask[1]&0x02)==0)throw std::runtime_error("in-focus point data requires AF mode");
+    unsigned bytes=(focal?2u:0u)+(mask[0]&0x08?1u:0u)+(mask[0]&0x04?1u:0u)+
+        (mask[0]&0x02?1u:0u)+(mask[0]&0x01?1u:0u)+(mask[1]&0x80?1u:0u)+
+        (mask[1]&0x40?1u:0u)+(mask[1]&0x20?1u:0u)+(mask[1]&0x10?1u:0u)+
+        (mask[1]&0x04?1u:0u)+(mask[1]&0x02?1u:0u)+(bulb?2u:0u)+
+        (date?3u:0u)+(time?3u:0u)+(cfnLow?11u:0u)+(mask[5]&0x08?1u:0u)+
+        (focus?7u:0u)+(battery?6u:0u);
+    if(bytes>28)throw std::runtime_error("selected shooting-data fields exceed the 28-byte limit");
+    const auto total=bytes+4;
+    return static_cast<std::uint8_t>(total<=8?0x08:total<=16?0x10:0x20);
+}
 } // namespace
 
 CameraProtocolSession::CameraProtocolSession(BridgeClient& bridge) : bridge_(bridge) {}
@@ -640,6 +675,28 @@ std::vector<CameraPacket> CameraProtocolSession::setPfnBlock(
             throw std::runtime_error("P.Fn parameter read-back mismatch");
         if(ownsSession)endSession();return output;
     }catch(...){try{if(ownsSession&&sessionActive_)endSession();}catch(...){}throw;}
+}
+
+std::vector<CameraPacket> CameraProtocolSession::setShootingDataMask(
+    const std::array<std::uint8_t,8>& mask) {
+    const auto width=shootingRecordWidth(mask);
+    const bool ownsSession=!sessionActive_;
+    auto output=ownsSession?beginSession():std::vector<CameraPacket>{};
+    try {
+        if(!ownsSession)nextAction(output);
+        auto before=fixed(0xe8,11);output.push_back({"SHOOTING DATA BEFORE",before});
+        if(std::equal(mask.begin(),mask.end(),before.begin()+2)) {
+            if(ownsSession)endSession();
+            output.push_back({"SHOOTING DATA AFTER",before});
+            return output;
+        }
+        pause(78);writeData(0xe7,std::span<const std::uint8_t>(&width,1));
+        pause(78);writeData(0xe9,mask);
+        pause(78);auto after=fixed(0xe8,11);output.push_back({"SHOOTING DATA AFTER",after});
+        if(!std::equal(mask.begin(),mask.end(),after.begin()+2))
+            throw std::runtime_error("shooting-data mask read-back mismatch");
+        if(ownsSession)endSession();return output;
+    } catch(...) { try { if(ownsSession&&sessionActive_)endSession(); } catch(...) {} throw; }
 }
 
 void CameraProtocolSession::closeSession() {

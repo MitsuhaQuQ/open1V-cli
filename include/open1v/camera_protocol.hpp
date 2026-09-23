@@ -66,6 +66,11 @@ public:
     std::vector<CameraPacket> setPfn27Dials(std::uint8_t option);
     std::vector<CameraPacket> setPfnBlock(
         std::uint8_t readCommand, std::span<const std::uint8_t> target);
+    // Sets the fields recorded for future film exposures. The implementation
+    // validates composite fields, dependencies, the 28-byte selectable-field
+    // limit, writes E7/E9, and verifies the result through E8.
+    std::vector<CameraPacket> setShootingDataMask(
+        const std::array<std::uint8_t, 8>& mask);
 
     // Explicit lifecycle control is retained only for protocol diagnostics
     // that intentionally keep PC mode open across separate invocations.
