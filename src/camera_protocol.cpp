@@ -390,13 +390,15 @@ std::vector<CameraPacket> CameraProtocolSession::readOnce(CameraRead selection) 
 }
 
 std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
-    if (sessionActive_)
-        throw std::runtime_error("film-record clear requires a fresh camera session");
-
     std::vector<CameraPacket> packets;
     try {
-        auto opened = beginSession();
-        packets.insert(packets.end(), opened.begin(), opened.end());
+        if (sessionActive_) {
+            if(actionUsed_)nextAction(packets);
+        } else {
+            auto opened = beginSession();
+            packets.insert(packets.end(), opened.begin(), opened.end());
+        }
+        actionUsed_ = true;
 
         pause(78);
         const std::uint8_t command = 0xe2;
@@ -436,10 +438,8 @@ std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
 
         pause(78);
         packets.push_back({"CLEAR FC", fixed(0xfc, 5, 1000)});
-        endSession();
         return packets;
     } catch (...) {
-        try { if (sessionActive_) endSession(); } catch (...) {}
         throw;
     }
 }

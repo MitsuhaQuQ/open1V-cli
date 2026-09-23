@@ -44,7 +44,7 @@ public:
     std::vector<CameraPacket> readOnce(CameraRead selection);
 
     // Deletes every film record stored by the camera with the verified E2
-    // command, then keeps the same session open until E1 reports zero.
+    // command, verifies E1 reports zero, and leaves the session open.
     // E2 is deliberately never retried because a lost acknowledgement leaves
     // the result ambiguous.
     std::vector<CameraPacket> clearFilmRecords();
