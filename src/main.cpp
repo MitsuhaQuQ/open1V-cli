@@ -5,6 +5,7 @@
 #include "open1v/self_test.hpp"
 #endif
 #include "open1v/serial_transport.hpp"
+#include "open1v/shared_transport.hpp"
 #include "open1v/winusb_transport.hpp"
 
 #include <algorithm>
@@ -322,8 +323,13 @@ int main(int argc, char** argv) {
             } else { usage(); return 2; }
         }
         if (useWinUsb && !port.empty()) { usage(); return 2; }
-        if (useWinUsb) transport = std::make_unique<open1v::WinUsbTransport>();
-        else transport = std::make_unique<open1v::SerialTransport>(port);
+        const auto deviceKey = useWinUsb ? std::string("winusb")
+                                         : std::string("serial:") + (port.empty() ? "auto" : port);
+        transport = std::make_unique<open1v::SharedTransport>(deviceKey,
+            [useWinUsb, port]() -> std::unique_ptr<open1v::ITransport> {
+                if (useWinUsb) return std::make_unique<open1v::WinUsbTransport>();
+                return std::make_unique<open1v::SerialTransport>(port);
+            });
         open1v::BridgeClient bridge(*transport);
         const std::string group = argv[1];
         const std::string action = argv[2];

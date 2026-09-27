@@ -36,6 +36,14 @@ See [LIBRARY.md](LIBRARY.md) for the public API and integration example.
   commands are exposed only by `open1V-debug`.
 - `BridgeClient` owns the documented `O1` framing protocol.
 - `ITransport` isolates platform transport from both layers.
+- `SharedTransport` coordinates CLI and FilmDB processes that select the same
+  bridge. On macOS and Linux the first process owns the physical descriptor and
+  later processes use a user-private Unix socket. Complete camera operations
+  are queued FIFO, an existing PC-mode session is inherited, and only the final
+  session user may send F2. If the owner application exits first, it keeps the
+  proxy alive until the remaining clients disconnect. Windows deliberately
+  keeps single-process exclusive access for now and reports an occupied bridge
+  instead of opening it twice.
 - `SerialTransport` is the default adapter and auto-detects the
   official UNO R4 WiFi/Minima identity or the experimental Minima ES-E1-ID
   CDC identity (`04A9:3040`). Windows uses the native COM API; macOS and Linux
@@ -75,6 +83,13 @@ On macOS, CMake links IOKit and CoreFoundation for USB device discovery. Linux
 uses sysfs and needs no additional library. An explicit device may be selected
 with `--port /dev/cu.usbmodem...` on macOS or `--port /dev/ttyACM0` on Linux.
 The `--winusb` option remains Windows-only.
+
+For shared operation, start `open1V` and `film-record` with the same transport
+selection: use automatic discovery in both programs, or pass the same explicit
+`--port` path to both. Each submitted camera command runs through its complete
+reply before the next process receives the link. An `endSession()` from one
+process only detaches that user while another session user remains; the final
+user performs the physical F2 shutdown.
 
 ## User commands
 

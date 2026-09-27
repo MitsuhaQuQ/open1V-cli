@@ -63,6 +63,7 @@ CameraProtocolSession::CameraProtocolSession(BridgeClient& bridge)
 std::vector<CameraPacket> CameraProtocolSession::writePfn(
     std::uint8_t readCommand, std::span<const std::uint8_t> expected,
     std::span<const std::uint8_t> target, bool authorized) {
+    BridgeClient::Operation operation(bridge_);
     if (!authorized) throw std::runtime_error("P.Fn write requires --allow-write-debug");
     struct Mapping { std::uint8_t read; std::uint8_t write; std::uint8_t length; };
     static constexpr std::array<Mapping,16> mappings{{
@@ -95,6 +96,7 @@ std::vector<CameraPacket> CameraProtocolSession::writePfn(
 std::vector<CameraPacket> CameraProtocolSession::writeCfn(
     std::uint8_t readCommand, std::span<const std::uint8_t> expected,
     std::span<const std::uint8_t> target, bool authorized) {
+    BridgeClient::Operation operation(bridge_);
     if (!authorized) throw std::runtime_error("C.Fn write requires --allow-write-debug");
     struct Mapping { std::uint8_t read; std::uint8_t write; std::uint8_t length; };
     static constexpr std::array<Mapping,4> mappings{{
@@ -317,6 +319,7 @@ void CameraProtocolSession::roundTrip(
 }
 
 std::vector<CameraPacket> CameraProtocolSession::readOnce(CameraRead selection) {
+    BridgeClient::Operation operation(bridge_);
     std::vector<CameraPacket> packets;
     try {
         auto opened = beginSession();
@@ -332,10 +335,11 @@ std::vector<CameraPacket> CameraProtocolSession::readOnce(CameraRead selection) 
 }
 
 std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
+    BridgeClient::Operation operation(bridge_);
     std::vector<CameraPacket> packets;
     try {
         if (sessionActive_) {
-            if(actionUsed_)nextAction(packets);
+            if(actionUsed_ || bridge_.shared())nextAction(packets);
         } else {
             auto opened = beginSession();
             packets.insert(packets.end(), opened.begin(), opened.end());
@@ -387,14 +391,22 @@ std::vector<CameraPacket> CameraProtocolSession::clearFilmRecords() {
 }
 
 std::vector<CameraPacket> CameraProtocolSession::beginSession() {
+    BridgeClient::Operation operation(bridge_);
     if (sessionActive_) throw std::runtime_error("camera session is already active");
     std::vector<CameraPacket> packets;
     sessionActive_ = true;
     actionUsed_ = false;
+    const bool inherited = bridge_.shared() && bridge_.acquireCameraSession();
+    sharedSessionRegistered_ = bridge_.shared();
     try {
-        begin(packets);
+        if (inherited) {
+            nextAction(packets);
+            actionUsed_ = true;
+        } else begin(packets);
     } catch (...) {
-        try { close(); } catch (...) {}
+        try { if (!inherited) close(); } catch (...) {}
+        try { if (sharedSessionRegistered_) bridge_.releaseCameraSession(); } catch (...) {}
+        sharedSessionRegistered_ = false;
         sessionActive_ = false;
         throw;
     }
@@ -402,9 +414,10 @@ std::vector<CameraPacket> CameraProtocolSession::beginSession() {
 }
 
 std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
+    BridgeClient::Operation operation(bridge_);
     if (!sessionActive_) throw std::runtime_error("camera session is not active");
     std::vector<CameraPacket> output;
-    if (actionUsed_) nextAction(output);
+    if (actionUsed_ || bridge_.shared()) nextAction(output);
 
     auto cfn = [&] {
         addFixed(output, "D5", 0xd5, 13);
@@ -497,9 +510,12 @@ std::vector<CameraPacket> CameraProtocolSession::perform(CameraRead selection) {
 }
 
 void CameraProtocolSession::endSession() {
+    BridgeClient::Operation operation(bridge_);
     if (!sessionActive_) throw std::runtime_error("camera session is not active");
     try {
-        close();
+        const bool last = !sharedSessionRegistered_ || bridge_.releaseCameraSession();
+        sharedSessionRegistered_ = false;
+        if (last) close();
         sessionActive_ = false;
         actionUsed_ = false;
     } catch (...) {
@@ -510,6 +526,7 @@ void CameraProtocolSession::endSession() {
 }
 
 std::vector<CameraPacket> CameraProtocolSession::setCameraId(std::uint8_t id) {
+    BridgeClient::Operation operation(bridge_);
     if (id > 99) throw std::runtime_error("camera ID must be 0..99");
     const bool ownsSession = !sessionActive_;
     auto output = ownsSession ? beginSession() : std::vector<CameraPacket>{};
@@ -526,6 +543,7 @@ std::vector<CameraPacket> CameraProtocolSession::setCameraId(std::uint8_t id) {
 
 std::vector<CameraPacket> CameraProtocolSession::setClock(
     const std::array<std::uint8_t,6>& value) {
+    BridgeClient::Operation operation(bridge_);
     auto decimal=[](std::uint8_t v){if((v>>4)>9||(v&15)>9)throw std::runtime_error("clock contains invalid BCD");return unsigned((v>>4)*10+(v&15));};
     std::array<unsigned,6> d{}; for(std::size_t i=0;i<6;++i)d[i]=decimal(value[i]);
     static constexpr std::array<unsigned,12> days{31,28,31,30,31,30,31,31,30,31,30,31};
@@ -548,6 +566,7 @@ std::vector<CameraPacket> CameraProtocolSession::setCurrentCfn(
 
 std::vector<CameraPacket> CameraProtocolSession::setCfn(
     CfnBank bank, std::uint8_t number, std::uint8_t option) {
+    BridgeClient::Operation operation(bridge_);
     if(number<1||number>19||option>(number==19?7:3))throw std::runtime_error("C.Fn number or option is outside its valid range");
     std::uint8_t readCommand=0xd1, writeCommand=0xd2;
     switch(bank){
@@ -572,6 +591,7 @@ std::vector<CameraPacket> CameraProtocolSession::setCfn(
 
 std::vector<CameraPacket> CameraProtocolSession::setPfnEnabled(
     std::uint8_t number, bool enabled) {
+    BridgeClient::Operation operation(bridge_);
     if(number<1||number>30)throw std::runtime_error("P.Fn number must be 1..30");
     const bool ownsSession=!sessionActive_; auto output=ownsSession?beginSession():std::vector<CameraPacket>{};
     try {
@@ -588,6 +608,7 @@ std::vector<CameraPacket> CameraProtocolSession::setPfnEnabled(
 }
 
 std::vector<CameraPacket> CameraProtocolSession::setPfn27Dials(std::uint8_t option) {
+    BridgeClient::Operation operation(bridge_);
     if(option>2)throw std::runtime_error("P.Fn-27 option must be 0, 1, or 2");
     const bool ownsSession=!sessionActive_;auto output=ownsSession?beginSession():std::vector<CameraPacket>{};
     try {
@@ -602,6 +623,7 @@ std::vector<CameraPacket> CameraProtocolSession::setPfn27Dials(std::uint8_t opti
 
 std::vector<CameraPacket> CameraProtocolSession::setPfnBlock(
     std::uint8_t readCommand, std::span<const std::uint8_t> target) {
+    BridgeClient::Operation operation(bridge_);
     struct Mapping { std::uint8_t read, write, length; };
     static constexpr std::array<Mapping,15> mappings{{
         {0xdd,0xde,5},{0xc5,0xb5,1},{0xc6,0xb6,1},{0xc1,0xb1,1},
@@ -626,6 +648,7 @@ std::vector<CameraPacket> CameraProtocolSession::setPfnBlock(
 
 std::vector<CameraPacket> CameraProtocolSession::setShootingDataMask(
     const std::array<std::uint8_t,8>& mask) {
+    BridgeClient::Operation operation(bridge_);
     const auto width=shootingDataRecordWidth(mask);
     const bool ownsSession=!sessionActive_;
     auto output=ownsSession?beginSession():std::vector<CameraPacket>{};
@@ -655,6 +678,7 @@ std::vector<CameraPacket> CameraProtocolSession::runDiagnostic(
                                                  const std::string& flow,
                                                  bool allowWriteDebug,
                                                  const std::string& argument) {
+    BridgeClient::Operation operation(bridge_);
     std::vector<CameraPacket> output;
     struct Guard {
         BridgeClient& bridge;
@@ -881,6 +905,3 @@ std::vector<CameraPacket> CameraProtocolSession::runDiagnostic(
 }
 
 } // namespace open1v
-
-
-

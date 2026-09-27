@@ -10,7 +10,8 @@ set(OPEN1V_CORE_SOURCES
     src/bridge_protocol.cpp
     src/camera_data.cpp
     src/camera_request.cpp
-    src/camera_protocol.cpp)
+    src/camera_protocol.cpp
+    src/shared_transport.cpp)
 
 if(WIN32)
     list(APPEND OPEN1V_CORE_SOURCES src/serial_transport.cpp src/winusb_transport.cpp)
@@ -48,5 +49,8 @@ if(BUILD_TESTING)
             target_link_libraries(open1v-posix-serial-test PRIVATE util)
         endif()
         add_test(NAME open1v-posix-serial-test COMMAND open1v-posix-serial-test)
+        add_executable(open1v-shared-transport-test tests/shared_transport_test.cpp)
+        target_link_libraries(open1v-shared-transport-test PRIVATE open1v-core)
+        add_test(NAME open1v-shared-transport-test COMMAND open1v-shared-transport-test)
     endif()
 endif()

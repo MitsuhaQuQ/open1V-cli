@@ -10,7 +10,7 @@
 
 namespace open1v {
 namespace {
-class FakeTransport final : public ITransport {
+class FakeTransport : public ITransport {
 public:
     explicit FakeTransport(bool filmCountChanges = false)
         : filmCountChanges_(filmCountChanges) {}
@@ -77,6 +77,20 @@ private:
     bool filmCountChanges_{};
 };
 
+struct SharedCameraState { unsigned users{}; };
+class SharedFakeTransport final : public FakeTransport {
+public:
+    explicit SharedFakeTransport(SharedCameraState& state) : state_(state) {}
+    bool isShared() const noexcept override { return true; }
+    bool acquireCameraSession() override { return state_.users++ != 0; }
+    bool releaseCameraSession() override {
+        if (state_.users == 0) throw std::runtime_error("shared session underflow");
+        return --state_.users == 0;
+    }
+private:
+    SharedCameraState& state_;
+};
+
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
@@ -139,6 +153,25 @@ int runSelfTests() {
     require(!persistentCamera.sessionActive(), "persistent session did not close");
     require(persistentTransport.goodbyeCount() == 2,
             "persistent session did not perform the captured two-stage exit");
+
+    SharedCameraState sharedState;
+    SharedFakeTransport firstSharedTransport(sharedState);
+    SharedFakeTransport secondSharedTransport(sharedState);
+    BridgeClient firstSharedBridge(firstSharedTransport);
+    BridgeClient secondSharedBridge(secondSharedTransport);
+    CameraProtocolSession firstSharedCamera(firstSharedBridge);
+    CameraProtocolSession secondSharedCamera(secondSharedBridge);
+    (void)firstSharedCamera.beginSession();
+    (void)secondSharedCamera.beginSession();
+    require(secondSharedTransport.helloCount() == 1,
+            "later client did not continue with the inherited action boundary");
+    firstSharedCamera.endSession();
+    require(firstSharedTransport.goodbyeCount() == 0,
+            "non-final shared client sent the camera exit sequence");
+    secondSharedCamera.endSession();
+    require(secondSharedTransport.goodbyeCount() == 2,
+            "final shared client did not send the camera exit sequence");
+    require(sharedState.users == 0, "shared session user count leaked");
 
     // E1 is advisory. E3's explicit all-end packet is authoritative when the
     // camera exposes another roll segment after the E1 snapshot was read.

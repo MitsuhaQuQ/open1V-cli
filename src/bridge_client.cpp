@@ -27,6 +27,12 @@ BridgeClient::BridgeClient(ITransport& transport) : transport_(transport) {}
 
 Frame BridgeClient::request(MessageType type, std::span<const std::uint8_t> payload,
                             int timeoutMs, bool requireOk) {
+    const bool standalone = operationDepth_ == 0;
+    if (standalone) beginOperation();
+    struct Guard {
+        BridgeClient* client;
+        ~Guard() { if (client) client->endOperation(); }
+    } guard{standalone ? this : nullptr};
     const auto sequence = nextSequence_++;
     const auto wire = encodeFrame(
         Frame{static_cast<std::uint8_t>(type), sequence,
@@ -41,6 +47,17 @@ Frame BridgeClient::request(MessageType type, std::span<const std::uint8_t> payl
         throw std::runtime_error("bridge reported an error");
     }
     return response;
+}
+
+void BridgeClient::beginOperation() {
+    if (operationDepth_++ == 0) {
+        try { transport_.beginOperation(); }
+        catch (...) { --operationDepth_; throw; }
+    }
+}
+
+void BridgeClient::endOperation() noexcept {
+    if (operationDepth_ && --operationDepth_ == 0) transport_.endOperation();
 }
 
 std::string BridgeClient::ping() {

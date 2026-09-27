@@ -31,6 +31,18 @@ struct ExchangeResult {
 
 class BridgeClient {
 public:
+    class Operation {
+    public:
+        explicit Operation(BridgeClient& client) : client_(&client) {
+            client_->beginOperation();
+        }
+        ~Operation() { if (client_) client_->endOperation(); }
+        Operation(const Operation&) = delete;
+        Operation& operator=(const Operation&) = delete;
+    private:
+        BridgeClient* client_;
+    };
+
     explicit BridgeClient(ITransport& transport);
     std::string ping();
     BridgeStatus status();
@@ -47,6 +59,11 @@ public:
                                     std::uint16_t expectedBytes,
                                     ExchangeProfile profile);
     void release();
+    void beginOperation();
+    void endOperation() noexcept;
+    [[nodiscard]] bool shared() const noexcept { return transport_.isShared(); }
+    bool acquireCameraSession() { return transport_.acquireCameraSession(); }
+    bool releaseCameraSession() { return transport_.releaseCameraSession(); }
 
 private:
     Frame request(MessageType type, std::span<const std::uint8_t> payload,
@@ -54,6 +71,7 @@ private:
     ITransport& transport_;
     std::uint16_t nextSequence_{1};
     bool profiledExchangeUnsupported_{};
+    unsigned operationDepth_{};
 };
 
 } // namespace open1v

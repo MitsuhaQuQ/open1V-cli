@@ -117,7 +117,7 @@ private:
     CameraRequest requests_;
     bool sessionActive_{};
     bool actionUsed_{};
+    bool sharedSessionRegistered_{};
 };
 
 } // namespace open1v
-
