@@ -154,6 +154,7 @@
     <ClInclude Include="include\open1v\camera_request.hpp" />
     <ClInclude Include="include\open1v\camera_protocol.hpp" />
     <ClInclude Include="include\open1v\serial_transport.hpp" />
+    <ClInclude Include="include\open1v\shared_transport.hpp" />
     <ClInclude Include="include\open1v\transport.hpp" />
     <ClInclude Include="include\open1v\winusb_transport.hpp" />
   </ItemGroup>
@@ -164,6 +165,7 @@
     <ClCompile Include="src\camera_request.cpp" />
     <ClCompile Include="src\camera_protocol.cpp" />
     <ClCompile Include="src\serial_transport.cpp" />
+    <ClCompile Include="src\shared_transport.cpp" />
     <ClCompile Include="src\winusb_transport.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
